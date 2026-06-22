@@ -1,0 +1,217 @@
+{
+  "entities": {
+    "Agent": {
+      "title": "Agent",
+      "description": "An agent or operator who can log in and perform inventory actions",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The unique ID of the agent"
+        },
+        "name": {
+          "type": "string",
+          "description": "The name of the agent"
+        },
+        "pin": {
+          "type": "string",
+          "description": "The unique PIN code of the agent"
+        },
+        "isAdmin": {
+          "type": "boolean",
+          "description": "Whether the agent has administrative privileges"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        }
+      },
+      "required": ["id", "name", "pin", "isAdmin", "createdAt"]
+    },
+    "Gamme": {
+      "title": "Gamme",
+      "description": "A product line containing perfumes and abbreviations",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The unique ID of the product range"
+        },
+        "name": {
+          "type": "string",
+          "description": "The name of the product range"
+        },
+        "perfumes": {
+          "type": "array",
+          "description": "List of perfumes in this range"
+        },
+        "perfumeAbbreviations": {
+          "type": "object",
+          "description": "Short code mapping for each perfume"
+        },
+        "standardQuantity": {
+          "type": "number",
+          "description": "Standard standard target quantity for palettes of this range"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        }
+      },
+      "required": ["id", "name", "perfumes", "createdAt"]
+    },
+    "PaletteEntry": {
+      "title": "PaletteEntry",
+      "description": "A single perfume entry inside a palette record",
+      "type": "object",
+      "properties": {
+        "perfume": {
+          "type": "string",
+          "description": "Name of the perfume"
+        },
+        "quantityDay": {
+          "type": "number",
+          "description": "Quantity recorded during day shift"
+        },
+        "quantityNight": {
+          "type": "number",
+          "description": "Quantity recorded during night shift"
+        }
+      },
+      "required": ["perfume", "quantityDay", "quantityNight"]
+    },
+    "Palette": {
+      "title": "Palette",
+      "description": "A palette document representing registered production batch tracking",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The unique ID of the palette"
+        },
+        "numberCode": {
+          "type": "string",
+          "description": "Formatted sequence code e.g. '01', '12'"
+        },
+        "agentId": {
+          "type": "string",
+          "description": "Associated Agent ID"
+        },
+        "agentName": {
+          "type": "string",
+          "description": "Associated Agent Name"
+        },
+        "gammeId": {
+          "type": "string",
+          "description": "Associated range ID"
+        },
+        "gammeName": {
+          "type": "string",
+          "description": "Associated range name"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["mono", "mixte"],
+          "description": "Whether palette contains single or multiple perfumes"
+        },
+        "entries": {
+          "type": "array",
+          "description": "List of perfume entries"
+        },
+        "lastUpdatedShift": {
+          "type": "string",
+          "enum": ["jour", "nuit"],
+          "description": "The shift ('jour' or 'nuit') of the last edit"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of creation"
+        }
+      },
+      "required": ["id", "numberCode", "agentId", "agentName", "gammeId", "gammeName", "type", "entries", "lastUpdatedShift", "createdAt"]
+    },
+    "InventoryEntry": {
+      "title": "InventoryEntry",
+      "description": "A single entry inside an independent inventory item",
+      "type": "object",
+      "properties": {
+        "perfume": {
+          "type": "string",
+          "description": "Name of the perfume"
+        },
+        "quantity": {
+          "type": "number",
+          "description": "The inventory stock level counted"
+        }
+      },
+      "required": ["perfume", "quantity"]
+    },
+    "InventoryItem": {
+      "title": "InventoryItem",
+      "description": "A calculated/physically verified inventory collection",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique ID of the inventory record"
+        },
+        "numberCode": {
+          "type": "string",
+          "description": "Formatted identifier of the inventory e.g. '01'"
+        },
+        "agentId": {
+          "type": "string",
+          "description": "Agent physical counter"
+        },
+        "agentName": {
+          "type": "string",
+          "description": "Agent counter name"
+        },
+        "gammeId": {
+          "type": "string",
+          "description": "Product range ID"
+        },
+        "gammeName": {
+          "type": "string",
+          "description": "Product range name"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["mono", "mixte"],
+          "description": "Category of inventory"
+        },
+        "entries": {
+          "type": "array",
+          "description": "Counted sub-items list"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation time"
+        }
+      },
+      "required": ["id", "numberCode", "agentId", "agentName", "gammeId", "gammeName", "type", "entries", "createdAt"]
+    }
+  },
+  "firestore": {
+    "agents": {
+      "schema": "Agent",
+      "description": "Collection of perfume agents and shift workers"
+    },
+    "gammes": {
+      "schema": "Gamme",
+      "description": "Collection of product lines and types of perfumes"
+    },
+    "palettes": {
+      "schema": "Palette",
+      "description": "Collection of daily production palettes in progress"
+    },
+    "inventories": {
+      "schema": "InventoryItem",
+      "description": "Collection of registered inventory sessions"
+    }
+  }
+}

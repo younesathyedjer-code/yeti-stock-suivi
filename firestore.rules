@@ -1,0 +1,89 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global Safety Net: default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper Functions
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isStringOfSize(val, max) {
+      return val is string && val.size() <= max;
+    }
+
+    function isValidAgent(data) {
+      return data.keys().hasAll(['id', 'name', 'pin', 'isAdmin', 'createdAt'])
+        && data.keys().size() >= 5
+        && isStringOfSize(data.id, 128)
+        && isStringOfSize(data.name, 100)
+        && isStringOfSize(data.pin, 20)
+        && data.isAdmin is bool
+        && isStringOfSize(data.createdAt, 50);
+    }
+
+    function isValidGamme(data) {
+      return data.keys().hasAll(['id', 'name', 'perfumes', 'createdAt'])
+        && data.id is string
+        && isStringOfSize(data.name, 100)
+        && data.perfumes is list
+        && isStringOfSize(data.createdAt, 50);
+    }
+
+    function isValidPalette(data) {
+      return data.keys().hasAll(['id', 'numberCode', 'agentId', 'agentName', 'gammeId', 'gammeName', 'type', 'entries', 'lastUpdatedShift', 'createdAt'])
+        && data.id is string
+        && data.numberCode is string
+        && data.agentId is string
+        && data.agentName is string
+        && data.gammeId is string
+        && data.gammeName is string
+        && (data.type == 'mono' || data.type == 'mixte')
+        && data.entries is list
+        && (data.lastUpdatedShift == 'jour' || data.lastUpdatedShift == 'nuit')
+        && data.createdAt is string;
+    }
+
+    function isValidInventoryItem(data) {
+      return data.keys().hasAll(['id', 'numberCode', 'agentId', 'agentName', 'gammeId', 'gammeName', 'type', 'entries', 'createdAt'])
+        && data.id is string
+        && data.numberCode is string
+        && data.agentId is string
+        && data.agentName is string
+        && data.gammeId is string
+        && data.gammeName is string
+        && (data.type == 'mono' || data.type == 'mixte')
+        && data.entries is list
+        && data.createdAt is string;
+    }
+
+    // Rules for collections
+    match /agents/{agentId} {
+      allow read: if true;
+      allow create, update: if isValidId(agentId) && isValidAgent(request.resource.data);
+      allow delete: if isValidId(agentId);
+    }
+
+    match /gammes/{gammeId} {
+      allow read: if true;
+      allow create, update: if isValidId(gammeId) && isValidGamme(request.resource.data);
+      allow delete: if isValidId(gammeId);
+    }
+
+    match /palettes/{paletteId} {
+      allow read: if true;
+      allow create, update: if isValidId(paletteId) && isValidPalette(request.resource.data);
+      allow delete: if isValidId(paletteId);
+    }
+
+    match /inventories/{inventoryId} {
+      allow read: if true;
+      allow create, update: if isValidId(inventoryId) && isValidInventoryItem(request.resource.data);
+      allow delete: if isValidId(inventoryId);
+    }
+  }
+}

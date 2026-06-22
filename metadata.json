@@ -1,0 +1,6 @@
+{
+  "name": "Gestion de Palettes de Parfums",
+  "description": "Application professionnelle de gestion de production, d’inventaire et d’étiquetage de palettes de parfums.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,107 @@
+@import "tailwindcss";
+
+@layer utilities {
+  /* Hide standard components during print layout */
+  @media print {
+    @page {
+      size: A4 portrait;
+      margin: 0 !important; /* Suppresses browser native headers and footers (title, URL, date, page numbers) completely */
+    }
+
+    body {
+      background-color: white !important;
+      color: black !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      -webkit-print-color-adjust: exact !important; /* Preserves visual styling and background highlights */
+      print-color-adjust: exact !important;
+    }
+    
+    /* Hide the entire React layout wrapper during printing to prevent empty first page */
+    #root {
+      display: none !important;
+      visibility: hidden !important;
+      height: 0 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      overflow: hidden !important;
+    }
+
+    header, 
+    nav, 
+    footer,
+    button,
+    select,
+    input,
+    textarea,
+    .no-print {
+      display: none !important;
+      visibility: hidden !important;
+    }
+
+    /* Target specific printable panes with relative natural layout */
+    #print-tags-pane,
+    #print-inventory-area,
+    #print-single-inventory-area,
+    #print-stats-area {
+      display: block !important;
+      visibility: visible !important;
+      position: relative !important;
+      width: 100% !important;
+      max-width: 100% !important;
+      margin: 0 !important;
+      box-sizing: border-box !important;
+    }
+
+    /* Safe physical page wrapper constraints compensating for 0 inner margin */
+    #print-inventory-area .page-break-after,
+    #print-single-inventory-area .page-break-after {
+      width: 100% !important;
+      height: auto !important; /* Let height flow naturally to avoid vertical stretching */
+      min-height: auto !important; /* Remove page minimum-height lock during print layout */
+      padding: 15mm 15mm 15mm 15mm !important; /* Clean margins far from paper bounds */
+      box-sizing: border-box !important;
+      display: flex !important;
+      flex-direction: column !important;
+      justify-content: flex-start !important; /* Keep elements close together beautifully */
+      gap: 1.5rem !important; /* Clean, tight professional spacing between categories */
+      background-color: white !important;
+    }
+
+    #print-tags-pane .page-break-after {
+      width: 100% !important;
+      height: 297mm !important; /* Exact A4 portrait height */
+      min-height: 297mm !important;
+      padding: 10mm 12mm 10mm 12mm !important; /* Perfectly centered sheet space for 4-tag layouts */
+      box-sizing: border-box !important;
+      display: flex !important;
+      flex-direction: column !important;
+      justify-content: space-between !important;
+      background-color: white !important;
+    }
+
+    /* Stats reports padding alignment */
+    #print-stats-area {
+      width: 100% !important;
+      padding: 15mm 15mm 15mm 15mm !important;
+      box-sizing: border-box !important;
+      background-color: white !important;
+    }
+
+    /* Safe break properties between pages */
+    .page-break-after {
+      page-break-after: always !important;
+      break-after: page !important;
+    }
+
+    /* Avoid splitting small elements across pages */
+    .break-inside-avoid,
+    .print-avoid-break,
+    img,
+    figure {
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+  }
+}
+
