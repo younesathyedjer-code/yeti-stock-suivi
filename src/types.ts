@@ -55,4 +55,7 @@ export interface InventoryItem {
   type: 'mono' | 'mixte';
   entries: InventoryEntry[];
   createdAt: string;
+  validationId?: string;
+  validationNumber?: number;
+  validationTimestamp?: string;
 }

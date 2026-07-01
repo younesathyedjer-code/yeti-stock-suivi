@@ -88,6 +88,41 @@
       background-color: white !important;
     }
 
+    /* Force high contrast and deep black text / borders for printing */
+    #print-tags-pane,
+    #print-inventory-area,
+    #print-single-inventory-area,
+    #print-stats-area {
+      color: #000000 !important;
+    }
+
+    /* Target all descendant elements to force deep black text and crisp dark borders during physical print */
+    #print-tags-pane *,
+    #print-inventory-area *,
+    #print-single-inventory-area *,
+    #print-stats-area * {
+      color: #000000 !important;
+      border-color: #000000 !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+
+    /* Keep text white for elements styled with solid black backgrounds (such as badges or indicators) */
+    #print-tags-pane .text-white,
+    #print-inventory-area .text-white,
+    #print-single-inventory-area .text-white,
+    #print-stats-area .text-white,
+    #print-tags-pane .bg-black,
+    #print-inventory-area .bg-black,
+    #print-single-inventory-area .bg-black,
+    #print-stats-area .bg-black,
+    #print-tags-pane .bg-black *,
+    #print-inventory-area .bg-black *,
+    #print-single-inventory-area .bg-black *,
+    #print-stats-area .bg-black * {
+      color: #ffffff !important;
+    }
+
     /* Safe break properties between pages */
     .page-break-after {
       page-break-after: always !important;

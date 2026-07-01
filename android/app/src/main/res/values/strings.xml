@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Yeti Stock Suivi</string>
+    <string name="title_activity_main">Yeti Stock Suivi</string>
+    <string name="package_name">com.yeti.stock</string>
+    <string name="custom_url_scheme">com.yeti.stock</string>
+</resources>

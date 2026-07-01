@@ -429,7 +429,10 @@ export function useAppState() {
     gammeId: string,
     gammeName: string,
     type: 'mono' | 'mixte',
-    entriesList: { perfume: string; qty: number }[]
+    entriesList: { perfume: string; qty: number }[],
+    validationId?: string,
+    validationNumber?: number,
+    validationTimestamp?: string
   ) => {
     if (!currentUser) throw new Error('Utilisateur non connecté.');
 
@@ -449,6 +452,9 @@ export function useAppState() {
       type,
       entries,
       createdAt: new Date().toISOString(),
+      validationId,
+      validationNumber,
+      validationTimestamp,
     };
 
     try {
@@ -457,6 +463,21 @@ export function useAppState() {
       handleFirestoreError(error, OperationType.CREATE, `inventories/${newItem.id}`);
     }
     return newItem;
+  };
+
+  const updateInventoryItem = async (
+    id: string,
+    entriesList: { perfume: string; quantity: number }[]
+  ) => {
+    const entries: InventoryEntry[] = entriesList.map(e => ({
+      perfume: e.perfume,
+      quantity: e.quantity,
+    }));
+    try {
+      await updateDoc(doc(db, 'inventories', id), { entries });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `inventories/${id}`);
+    }
   };
 
   const deleteInventoryItem = async (id: string) => {
@@ -501,6 +522,7 @@ export function useAppState() {
     deletePalette,
     updatePalette,
     addInventoryItem,
+    updateInventoryItem,
     deleteInventoryItem,
     resetAllPalettes,
   };

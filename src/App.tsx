@@ -39,6 +39,7 @@ export default function App() {
     deletePalette,
     updatePalette,
     addInventoryItem,
+    updateInventoryItem,
     deleteInventoryItem,
     resetAllPalettes,
   } = useAppState();
@@ -213,6 +214,7 @@ export default function App() {
             inventories={inventories}
             currentUser={currentUser}
             onAddInventoryItem={addInventoryItem}
+            onUpdateInventoryItem={updateInventoryItem}
             onDeleteInventoryItem={deleteInventoryItem}
           />
         )}

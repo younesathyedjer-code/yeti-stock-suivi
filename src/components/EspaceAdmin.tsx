@@ -42,9 +42,10 @@ export interface AgentConsolidatedInventory {
   }[];
 }
 
-// Helper to group inventories by agent and consolidate their entries
+// Helper to group inventories by validation session and consolidate their entries
 export const getConsolidatedInventories = (allInventories: InventoryItem[]): AgentConsolidatedInventory[] => {
-  const agentMap: Record<string, {
+  const sessionMap: Record<string, {
+    id: string;
     agentId: string;
     agentName: string;
     createdAt: string;
@@ -52,28 +53,33 @@ export const getConsolidatedInventories = (allInventories: InventoryItem[]): Age
   }> = {};
 
   allInventories.forEach(item => {
-    if (!agentMap[item.agentId]) {
-      agentMap[item.agentId] = {
+    const sId = item.validationId || item.id;
+    if (!sessionMap[sId]) {
+      sessionMap[sId] = {
+        id: sId,
         agentId: item.agentId,
         agentName: item.agentName,
-        createdAt: item.createdAt,
+        createdAt: item.validationTimestamp || item.createdAt,
         rawItems: []
       };
     }
-    agentMap[item.agentId].rawItems.push(item);
-    if (new Date(item.createdAt) > new Date(agentMap[item.agentId].createdAt)) {
-      agentMap[item.agentId].createdAt = item.createdAt;
+    sessionMap[sId].rawItems.push(item);
+    
+    const itemTime = new Date(item.validationTimestamp || item.createdAt).getTime();
+    const mapTime = new Date(sessionMap[sId].createdAt).getTime();
+    if (itemTime < mapTime) {
+      sessionMap[sId].createdAt = item.validationTimestamp || item.createdAt;
     }
   });
 
-  // Sort agents chronologically based on their latest inventory entry time DESC (most recent first)
-  const sortedAgents = Object.values(agentMap).sort((a, b) => {
-    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  const sortedSessionsAsc = Object.values(sessionMap).sort((a, b) => {
+    return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
   });
 
-  return sortedAgents.map((agentGroup, index) => {
-    const numCode = (index + 1) < 10 ? `0${index + 1}` : `${index + 1}`;
-    
+  const sessions: AgentConsolidatedInventory[] = sortedSessionsAsc.map((session, index) => {
+    const valNum = index + 1;
+    const numCode = valNum < 10 ? `0${valNum}` : `${valNum}`;
+
     // Sum quantities by [gammeId + ':' + perfume]
     const sumMap: Record<string, {
       gammeId: string;
@@ -82,7 +88,7 @@ export const getConsolidatedInventories = (allInventories: InventoryItem[]): Age
       quantity: number;
     }> = {};
 
-    agentGroup.rawItems.forEach(item => {
+    session.rawItems.forEach(item => {
       item.entries.forEach(entry => {
         const key = `${item.gammeId}:${entry.perfume}`;
         if (!sumMap[key]) {
@@ -104,15 +110,17 @@ export const getConsolidatedInventories = (allInventories: InventoryItem[]): Age
     });
 
     return {
-      id: agentGroup.agentId,
+      id: session.id,
       numberCode: numCode,
-      agentId: agentGroup.agentId,
-      agentName: agentGroup.agentName,
-      createdAt: agentGroup.createdAt,
+      agentId: session.agentId,
+      agentName: session.agentName,
+      createdAt: session.createdAt,
       type: 'global',
       entries
     };
   });
+
+  return sessions.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 };
 
 export default function EspaceAdmin({
@@ -547,9 +555,9 @@ export default function EspaceAdmin({
   const confirmDeleteInventory = () => {
     if (!inventoryToDelete) return;
     try {
-      const toDelete = inventories.filter(inv => inv.agentId === inventoryToDelete.agentId);
+      const toDelete = inventories.filter(inv => (inv.validationId || inv.id) === inventoryToDelete.id);
       toDelete.forEach(inv => onDeleteInventoryItem(inv.id));
-      triggerSuccessMsg(`L'inventaire de ${inventoryToDelete.agentName} a été supprimé avec succès.`);
+      triggerSuccessMsg(`L'inventaire N°${inventoryToDelete.numberCode} de ${inventoryToDelete.agentName} a été supprimé avec succès.`);
     } catch (err: any) {
       triggerErrorMsg("Erreur lors de la suppression de l'inventaire.");
     } finally {

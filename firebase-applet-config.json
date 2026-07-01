@@ -3,6 +3,7 @@
   "appId": "1:315164785583:web:356c37fedebdb8c2690d5a",
   "apiKey": "AIzaSyC1ELZMdjCixGCfw_9vd071I3ZxFUaIWnA",
   "authDomain": "yeti-stock-suivi.firebaseapp.com",
+  "firestoreDatabaseId": "(default)",
   "storageBucket": "yeti-stock-suivi.firebasestorage.app",
   "messagingSenderId": "315164785583",
   "measurementId": ""

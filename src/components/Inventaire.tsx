@@ -5,10 +5,12 @@
 
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { Html5Qrcode } from 'html5-qrcode';
 import { Gamme, InventoryItem } from '../types';
 import { 
   ClipboardCheck, Sparkles, Folder, RefreshCw, Layers, Plus, 
-  Trash2, ShieldCheck, AlertCircle, Printer, Calendar, User 
+  Trash2, ShieldCheck, AlertCircle, Printer, Calendar, User,
+  Edit2, Save, X, Check, QrCode, Camera, Keyboard
 } from 'lucide-react';
 
 interface InventaireProps {
@@ -16,8 +18,92 @@ interface InventaireProps {
   gammes: Gamme[];
   inventories: InventoryItem[];
   currentUser: { name: string; id: string; isAdmin: boolean };
-  onAddInventoryItem: (gammeId: string, gammeName: string, type: 'mono' | 'mixte', entries: { perfume: string; qty: number }[]) => void;
+  onAddInventoryItem: (
+    gammeId: string, 
+    gammeName: string, 
+    type: 'mono' | 'mixte', 
+    entries: { perfume: string; qty: number }[],
+    validationId?: string,
+    validationNumber?: number,
+    validationTimestamp?: string
+  ) => Promise<any>;
+  onUpdateInventoryItem: (id: string, entries: { perfume: string; quantity: number }[]) => Promise<void>;
   onDeleteInventoryItem: (id: string) => void;
+}
+
+export interface ValidatedSession {
+  id: string;
+  numberCode: string;
+  validationNumber: number;
+  agentId: string;
+  agentName: string;
+  createdAt: string;
+  items: {
+    id: string;
+    gammeId: string;
+    gammeName: string;
+    type: 'mono' | 'mixte';
+    entries: { perfume: string; quantity: number }[];
+  }[];
+}
+
+export function getValidatedSessions(allInventories: InventoryItem[]): ValidatedSession[] {
+  const sessionMap: Record<string, {
+    id: string;
+    agentId: string;
+    agentName: string;
+    createdAt: string;
+    rawItems: InventoryItem[];
+  }> = {};
+
+  allInventories.forEach(item => {
+    const sId = item.validationId || item.id;
+    if (!sessionMap[sId]) {
+      sessionMap[sId] = {
+        id: sId,
+        agentId: item.agentId,
+        agentName: item.agentName,
+        createdAt: item.validationTimestamp || item.createdAt,
+        rawItems: []
+      };
+    }
+    sessionMap[sId].rawItems.push(item);
+    
+    const itemTime = new Date(item.validationTimestamp || item.createdAt).getTime();
+    const mapTime = new Date(sessionMap[sId].createdAt).getTime();
+    if (itemTime < mapTime) {
+      sessionMap[sId].createdAt = item.validationTimestamp || item.createdAt;
+    }
+  });
+
+  const sortedSessionsAsc = Object.values(sessionMap).sort((a, b) => {
+    return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+  });
+
+  const sessions: ValidatedSession[] = sortedSessionsAsc.map((session, index) => {
+    const valNum = index + 1;
+    const numCode = valNum < 10 ? `0${valNum}` : `${valNum}`;
+
+    const items = session.rawItems.map(raw => ({
+      id: raw.id,
+      gammeId: raw.gammeId,
+      gammeName: raw.gammeName,
+      type: raw.type,
+      entries: raw.entries.map(e => ({ perfume: e.perfume, quantity: e.quantity }))
+    }));
+
+    return {
+      id: session.id,
+      numberCode: numCode,
+      validationNumber: valNum,
+      agentId: session.agentId,
+      agentName: session.agentName,
+      createdAt: session.createdAt,
+      items
+    };
+  });
+
+  return sessions.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
 export default function Inventaire({
@@ -25,6 +111,7 @@ export default function Inventaire({
   inventories,
   currentUser,
   onAddInventoryItem,
+  onUpdateInventoryItem,
   onDeleteInventoryItem
 }: InventaireProps) {
   const getMixedPaletteLabel = (item: InventoryItem) => {
@@ -82,6 +169,26 @@ export default function Inventaire({
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Draft inventories state with persistence in localStorage
+  const [draftInventories, setDraftInventories] = useState<any[]>(() => {
+    try {
+      const stored = localStorage.getItem(`yetistock_draft_inventories_${currentUser.id}`);
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [isSavingAll, setIsSavingAll] = useState<boolean>(false);
+
+  // Auto-persist drafts to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(`yetistock_draft_inventories_${currentUser.id}`, JSON.stringify(draftInventories));
+    } catch (err) {
+      console.error("Error writing draft inventories to localStorage:", err);
+    }
+  }, [draftInventories, currentUser.id]);
+
   // Mixed inventory builder
   const [isMixedMode, setIsMixedMode] = useState<boolean>(false);
   const [mixedEntries, setMixedEntries] = useState<{ perfume: string; qty: number }[]>([]);
@@ -92,6 +199,122 @@ export default function Inventaire({
   // Manage custom entered quantities per product card
   const [monoCustomQuantities, setMonoCustomQuantities] = useState<Record<string, string>>({});
   const [pendingPrint, setPendingPrint] = useState<boolean>(false);
+
+  // Session editing states
+  const [editingSession, setEditingSession] = useState<any | null>(null);
+  const [editingEntries, setEditingEntries] = useState<Record<string, { perfume: string; quantity: number }[]>>({});
+  const [isUpdatingSession, setIsUpdatingSession] = useState<boolean>(false);
+
+  // QR & Barcode scanner states
+  const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
+  const [douchetteInput, setDouchetteInput] = useState<string>('');
+
+  const handleProcessScannedCode = (scannedText: string) => {
+    try {
+      if (!scannedText || !scannedText.startsWith('PALETTE|')) {
+        triggerErrorMsg("Code-barres / QR Code invalide ou non reconnu pour l'inventaire.");
+        return;
+      }
+
+      const parts = scannedText.split('|');
+      if (parts.length < 6) {
+        triggerErrorMsg("Données du QR Code incomplètes.");
+        return;
+      }
+
+      const paletteId = parts[1];
+      const gammeId = parts[2];
+      const gammeName = parts[3];
+      const type = parts[4] as 'mono' | 'mixte';
+      const entriesRaw = parts[5];
+
+      if (!entriesRaw) {
+        triggerErrorMsg("La palette scannée est vide (aucun parfum).");
+        return;
+      }
+
+      const entries = entriesRaw.split(';').map(item => {
+        const [perfume, qtyStr] = item.split(':');
+        return { perfume, qty: parseInt(qtyStr, 10) || 0 };
+      }).filter(e => e.qty > 0);
+
+      if (entries.length === 0) {
+        triggerErrorMsg("Aucune quantité valide trouvée dans la palette scannée.");
+        return;
+      }
+
+      // Check if this palette has already been scanned to avoid duplicates
+      const isAlreadyAdded = draftInventories.some(item => item.id === `scanned_${paletteId}`);
+      if (isAlreadyAdded) {
+        triggerErrorMsg(`Cette palette (N° ${paletteId}) a déjà été scannée et ajoutée au comptage en cours.`);
+        return;
+      }
+
+      const newItem = {
+        id: `scanned_${paletteId}`,
+        gammeId,
+        gammeName,
+        type,
+        entries,
+        agentId: currentUser.id,
+        agentName: currentUser.name
+      };
+
+      setDraftInventories(prev => [...prev, newItem]);
+      triggerSuccessMsg(`Palette scannée avec succès ! ${gammeName} (${type === 'mono' ? 'Mono' : 'Mixte'}) - ${entries.map(e => `${e.perfume}: ${e.qty}`).join(', ')}`);
+    } catch (e: any) {
+      triggerErrorMsg(`Erreur lors du traitement du scan: ${e.message || e}`);
+    }
+  };
+
+  const handleDouchetteSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!douchetteInput.trim()) return;
+    handleProcessScannedCode(douchetteInput.trim());
+    setDouchetteInput('');
+  };
+
+  // Camera scanner initialization
+  useEffect(() => {
+    let html5QrCode: Html5Qrcode | null = null;
+    
+    if (isCameraActive) {
+      const startCamera = async () => {
+        try {
+          html5QrCode = new Html5Qrcode("camera-scanner-element");
+          await html5QrCode.start(
+            { facingMode: "environment" },
+            {
+              fps: 10,
+              qrbox: (width, height) => {
+                const size = Math.min(width, height) * 0.7;
+                return { width: size, height: size };
+              },
+            },
+            (decodedText) => {
+              handleProcessScannedCode(decodedText);
+              setIsCameraActive(false);
+            },
+            () => {
+              // Ignore frame analysis errors
+            }
+          );
+        } catch (err: any) {
+          console.error("Camera scanner start error:", err);
+          triggerErrorMsg(`Impossible d'accéder à la caméra : ${err.message || err}`);
+          setIsCameraActive(false);
+        }
+      };
+
+      const timer = setTimeout(startCamera, 350);
+      return () => {
+        clearTimeout(timer);
+        if (html5QrCode && html5QrCode.isScanning) {
+          html5QrCode.stop().catch(err => console.warn("Error stopping camera:", err));
+        }
+      };
+    }
+  }, [isCameraActive]);
 
   // Reliable print effect triggered after DOM rendering is complete
   useEffect(() => {
@@ -314,8 +537,17 @@ export default function Inventaire({
   // Quick standard inventory add
   const handleQuickAdd = (gammeId: string, gammeName: string, perfume: string, qty: number) => {
     try {
-      onAddInventoryItem(gammeId, gammeName, 'mono', [{ perfume, qty }]);
-      triggerSuccessMsg(`Inventaire : 1 palette (${perfume}) de ${qty} u. enregistrée !`);
+      const newItem = {
+        id: `draft_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        gammeId,
+        gammeName,
+        type: 'mono' as const,
+        entries: [{ perfume, qty }],
+        agentId: currentUser.id,
+        agentName: currentUser.name
+      };
+      setDraftInventories(prev => [...prev, newItem]);
+      triggerSuccessMsg(`Saisie ajoutée : 1 palette (${perfume}) de ${qty} u. en cours. Cliquez sur « Valider » en bas pour sauvegarder définitivement.`);
     } catch (e: any) {
       triggerErrorMsg(e.message || "Erreur de saisie.");
     }
@@ -346,8 +578,17 @@ export default function Inventaire({
       return;
     }
     try {
-      onAddInventoryItem(activeG.id, activeG.name, 'mixte', mixedEntries);
-      triggerSuccessMsg("Saisie mixte d'inventaire validée !");
+      const newItem = {
+        id: `draft_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        gammeId: activeG.id,
+        gammeName: activeG.name,
+        type: 'mixte' as const,
+        entries: mixedEntries.map(e => ({ perfume: e.perfume, qty: e.qty })),
+        agentId: currentUser.id,
+        agentName: currentUser.name
+      };
+      setDraftInventories(prev => [...prev, newItem]);
+      triggerSuccessMsg("Saisie mixte ajoutée au comptage en cours. Cliquez sur « Valider » en bas pour sauvegarder définitivement.");
       setMixedEntries([]);
       setIsMixedMode(false);
       setSelectedGammeId('');
@@ -361,6 +602,99 @@ export default function Inventaire({
     setActivePerfumeInput(null);
     setIsMixedMode(false);
     setSelectedGammeId('');
+  };
+
+  const handleSaveAllDrafts = async () => {
+    if (draftInventories.length === 0) {
+      triggerErrorMsg("Aucun comptage d'inventaire en cours à enregistrer.");
+      return;
+    }
+    setIsSavingAll(true);
+    try {
+      const existingValidationNumbers = inventories
+        .map(inv => inv.validationNumber || 0)
+        .filter(Boolean);
+      const nextValidationNumber = existingValidationNumbers.length > 0
+        ? Math.max(...existingValidationNumbers) + 1
+        : 1;
+
+      const validationId = `validation_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const validationTimestamp = new Date().toISOString();
+
+      for (const item of draftInventories) {
+        await onAddInventoryItem(
+          item.gammeId, 
+          item.gammeName, 
+          item.type, 
+          item.entries, 
+          validationId, 
+          nextValidationNumber, 
+          validationTimestamp
+        );
+      }
+      triggerSuccessMsg(`L'inventaire complet N°${nextValidationNumber} (${draftInventories.length} ligne(s)) a été sauvegardé définitivement avec succès !`);
+      setDraftInventories([]);
+    } catch (e: any) {
+      triggerErrorMsg(e.message || "Erreur lors de la validation de l'inventaire.");
+    } finally {
+      setIsSavingAll(false);
+    }
+  };
+
+  const handleDeleteDraftItem = (id: string) => {
+    setDraftInventories(prev => prev.filter(item => item.id !== id));
+    triggerSuccessMsg("Saisie en cours retirée.");
+  };
+
+  const handleStartEditSession = (session: any) => {
+    setEditingSession(session);
+    const initialEntriesMap: Record<string, { perfume: string; quantity: number }[]> = {};
+    session.items.forEach((item: any) => {
+      initialEntriesMap[item.id] = item.entries.map((e: any) => ({
+        perfume: e.perfume,
+        quantity: e.quantity
+      }));
+    });
+    setEditingEntries(initialEntriesMap);
+  };
+
+  const handleUpdateEntryQty = (itemId: string, perfume: string, newQty: number) => {
+    setEditingEntries(prev => {
+      const entries = prev[itemId] || [];
+      return {
+        ...prev,
+        [itemId]: entries.map(e => e.perfume === perfume ? { ...e, quantity: newQty } : e)
+      };
+    });
+  };
+
+  const handleSaveSessionEdit = async () => {
+    setIsUpdatingSession(true);
+    try {
+      for (const item of editingSession.items) {
+        const updatedEntries = editingEntries[item.id];
+        await onUpdateInventoryItem(item.id, updatedEntries);
+      }
+      triggerSuccessMsg(`L'inventaire complet N°${editingSession.numberCode} a été modifié avec succès !`);
+      setEditingSession(null);
+    } catch (e: any) {
+      triggerErrorMsg(e.message || "Erreur lors de la modification de l'inventaire.");
+    } finally {
+      setIsUpdatingSession(false);
+    }
+  };
+
+  const handleDeleteSession = async (session: any) => {
+    if (window.confirm(`Êtes-vous sûr de vouloir supprimer définitivement l'inventaire N°${session.numberCode} ?`)) {
+      try {
+        for (const item of session.items) {
+          await onDeleteInventoryItem(item.id);
+        }
+        triggerSuccessMsg(`L'inventaire N°${session.numberCode} a été supprimé.`);
+      } catch (e: any) {
+        triggerErrorMsg("Erreur lors de la suppression de l'inventaire.");
+      }
+    }
   };
 
   // Dynamic printing of current state
@@ -406,6 +740,90 @@ export default function Inventaire({
           <AlertCircle className="w-4 h-4 flex-shrink-0" /> {errorMsg}
         </div>
       )}
+
+      {/* SCANNER & SAISIE RAPIDE SECTION */}
+      <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-xs space-y-4">
+        <div>
+          <h3 className="text-sm font-bold text-slate-850 flex items-center gap-2">
+            <QrCode className="w-5 h-5 text-indigo-600 animate-pulse" /> Scanner d'Inventaire Intégré
+          </h3>
+          <p className="text-slate-500 text-[11px] mt-0.5">
+            Scannez directement le QR Code d'une étiquette imprimée pour charger instantanément les détails de la palette (Gamme, Parfums et Quantités) dans votre inventaire en cours.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          
+          {/* CAMERA PHONE SCANNER */}
+          <div className="border border-slate-200/80 p-5 rounded-2xl bg-slate-50 flex flex-col justify-between space-y-4">
+            <div className="text-left">
+              <span className="text-[10px] uppercase font-bold text-indigo-600 tracking-wider">Option A : Caméra Mobile / Tablette</span>
+              <p className="text-xs text-slate-650 font-semibold mt-1">Flashez le QR Code avec l'appareil photo arrière de votre appareil.</p>
+            </div>
+
+            {isCameraActive ? (
+              <div className="space-y-3">
+                <div className="relative border-2 border-indigo-600 rounded-2xl overflow-hidden bg-black max-w-sm mx-auto aspect-square">
+                  <div id="camera-scanner-element" className="w-full h-full"></div>
+                  <div className="absolute inset-0 pointer-events-none border-4 border-dashed border-white/40 m-8 rounded-xl animate-pulse flex items-center justify-center">
+                    <span className="text-white/80 text-[10px] bg-slate-900/60 px-2 py-1 rounded font-bold uppercase tracking-widest">Ciblez le QR Code</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsCameraActive(false)}
+                  className="w-full py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl cursor-pointer transition-colors"
+                >
+                  Arrêter la caméra
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIsCameraActive(true)}
+                className="w-full py-3 bg-indigo-650 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 shadow-xs shadow-indigo-150"
+              >
+                <Camera className="w-4 h-4" /> Activer le Scanner Caméra
+              </button>
+            )}
+          </div>
+
+          {/* PHYSICAL DOUCHETTE BARCODE SCANNER */}
+          <form onSubmit={handleDouchetteSubmit} className="border border-slate-200/80 p-5 rounded-2xl bg-slate-50 flex flex-col justify-between space-y-4">
+            <div className="text-left">
+              <span className="text-[10px] uppercase font-bold text-indigo-600 tracking-wider">Option B : Douchette Code-barres / Clavier</span>
+              <p className="text-xs text-slate-650 font-semibold mt-1">Utilisez une douchette classique ou saisissez le code copié manuellement.</p>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <span className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-slate-400">
+                    <Keyboard className="w-4 h-4" />
+                  </span>
+                  <input
+                    type="text"
+                    placeholder="Cliquez ici puis scannez avec la douchette..."
+                    value={douchetteInput}
+                    onChange={(e) => setDouchetteInput(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2.5 bg-white border border-slate-250 rounded-xl text-xs font-bold text-slate-800 outline-hidden focus:ring-1 focus:ring-indigo-500 font-mono"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="px-4 py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl transition-all cursor-pointer shadow-xs"
+                >
+                  Valider
+                </button>
+              </div>
+              <p className="text-[10px] text-slate-400 italic text-left">
+                💡 Astuce : Sélectionnez la case ci-dessus, puis scannez avec votre douchette pour un enregistrement automatique.
+              </p>
+            </div>
+          </form>
+
+        </div>
+      </div>
 
       {/* Main product navigation grids */}
       {gammes.length === 0 ? (
@@ -697,82 +1115,202 @@ export default function Inventaire({
         </div>
       )}
 
-      {/* Complete Inventories logs grouped by agent */}
-      <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+      {/* Saisies en cours de validation (Draft list) with the Valider button */}
+      <div className="bg-slate-900 text-white rounded-2xl p-6 border border-slate-800 shadow-md space-y-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
           <div>
-            <h3 className="text-sm font-bold text-slate-800">Registre Global d'Inventaire Actif</h3>
-            <p className="text-slate-400 text-[11px]">Saisies de comptage physique en temps réel par les opérateurs</p>
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <ClipboardCheck className="w-4.5 h-4.5 text-emerald-400" /> Saisies en cours de validation
+            </h3>
+            <p className="text-slate-400 text-[11px]">Données saisies localement en attente de sauvegarde définitive</p>
           </div>
           
           <div className="flex items-center gap-3">
-            <span className="text-xs bg-slate-100 text-slate-600 px-3 py-1 rounded-full font-semibold">
-              Total palettes enregistrées : {inventories.length}
+            <span className="text-xs bg-slate-800 text-emerald-400 px-3 py-1 rounded-full font-semibold border border-slate-700/50">
+              {draftInventories.length} palette(s) à valider
             </span>
           </div>
         </div>
 
-        {inventories.length === 0 ? (
+        {draftInventories.length === 0 ? (
+          <div className="text-center py-8 text-slate-500 text-xs italic">
+            Aucune saisie en cours. Cliquez sur les parfums des gammes ci-dessus pour ajouter des données de comptage.
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="overflow-x-auto max-h-60 overflow-y-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[10px]">
+                    <th className="py-2.5 font-bold">Gamme / Produit</th>
+                    <th className="py-2.5 font-bold">Type</th>
+                    <th className="py-2.5 font-bold">Comptage & Parfums</th>
+                    <th className="py-2.5 font-bold text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800 text-slate-300">
+                  {draftInventories.map((item) => (
+                    <tr key={item.id} className="hover:bg-slate-800/30">
+                      <td className="py-3.5 font-semibold text-white">{item.gammeName}</td>
+                      <td className="py-3.5">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                          item.type === 'mono' ? 'bg-blue-900/40 text-blue-300 border border-blue-800/50' : 'bg-amber-900/40 text-amber-300 border border-amber-800/50'
+                        }`}>
+                          {item.type === 'mono' ? 'Simple' : 'Palette Mixte'}
+                        </span>
+                      </td>
+                      <td className="py-3.5">
+                        <div className="flex flex-col gap-1">
+                          {item.entries.map((e: any, idx: number) => (
+                            <div key={idx} className="flex items-center gap-1.5 text-slate-300 font-medium">
+                              <span>{e.perfume}</span>: 
+                              <span className="font-mono bg-slate-800 text-emerald-300 px-1.5 rounded text-[10px] font-bold border border-slate-700/40">
+                                {e.qty} u
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="py-3.5 text-right">
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteDraftItem(item.id)}
+                          className="p-1 px-2 border border-slate-800 rounded-lg hover:bg-rose-950 hover:border-rose-800 hover:text-rose-400 text-slate-500 transition-all font-semibold cursor-pointer"
+                          title="Retirer cette saisie"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Validate/Submit Inventory button */}
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={handleSaveAllDrafts}
+                disabled={isSavingAll}
+                className="w-full sm:w-auto px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-all shadow-md shadow-emerald-900/30 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {isSavingAll ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    Enregistrement définitif en cours...
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck className="w-4 h-4 text-emerald-200" />
+                    Valider et Enregistrer Définitivement l'Inventaire ({draftInventories.length} ligne(s))
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Complete Inventories logs grouped by validation session */}
+      <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-bold text-slate-800">Registre Global d'Inventaire Actif</h3>
+            <p className="text-slate-400 text-[11px]">Saisies de comptage physique en temps réel par les opérateurs, classées par inventaire validé</p>
+          </div>
+          
+          <div className="flex items-center gap-3">
+            <span className="text-xs bg-slate-100 text-slate-600 px-3 py-1 rounded-full font-semibold">
+              Total inventaires validés : {getValidatedSessions(inventories).length}
+            </span>
+          </div>
+        </div>
+
+        {getValidatedSessions(inventories).length === 0 ? (
           <div className="text-center py-8 text-slate-400 text-xs italic">
             Aucun comptage d'inventaire enregistré à ce jour.
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
+            <table className="w-full text-left text-xs border-collapse font-sans">
               <thead>
                 <tr className="border-b border-slate-100 text-slate-400 uppercase tracking-wider text-[10px]">
-                  <th className="py-2.5 font-bold">Gamme / Produit</th>
-                  <th className="py-2.5 font-bold">Type Inventaire</th>
-                  <th className="py-2.5 font-bold">Comptage & Parfums</th>
+                  <th className="py-2.5 font-bold">Inventaire</th>
                   <th className="py-2.5 font-bold">Opérateur</th>
                   <th className="py-2.5 font-bold">Horodatage</th>
+                  <th className="py-2.5 font-bold">Contenu (Gammes & Parfums)</th>
                   <th className="py-2.5 font-bold text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-50 text-slate-700">
-                {inventories.map((item) => (
-                  <tr key={item.id} className="hover:bg-slate-50/50">
-                    <td className="py-3.5 font-semibold text-slate-800">{item.gammeName}</td>
-                    <td className="py-3.5">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                        item.type === 'mono' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'
-                      }`}>
-                        {item.type === 'mono' ? 'Simple' : 'Palette Mixte'}
+              <tbody className="divide-y divide-slate-100 text-slate-700">
+                {getValidatedSessions(inventories).map((session) => (
+                  <tr key={session.id} className="hover:bg-slate-50/50">
+                    <td className="py-4 font-bold text-slate-900 align-top">
+                      <span className="bg-blue-50 border border-blue-100 text-blue-700 rounded-md font-bold text-xs px-2.5 py-1 tracking-tight uppercase inline-flex items-center gap-1">
+                        Inventaire {session.validationNumber}
                       </span>
                     </td>
-                    <td className="py-3.5">
-                      <div className="flex flex-col gap-1">
-                        {item.entries.map((e, idx) => (
-                          <div key={idx} className="flex items-center gap-1.5 text-slate-600 font-medium">
-                            <span>{e.perfume}</span>: 
-                            <span className="font-mono bg-slate-100 text-slate-800 px-1.5 rounded text-[10px] font-bold">
-                              {e.quantity} u
-                            </span>
+                    <td className="py-4 align-top">
+                      <span className="inline-flex items-center gap-1 font-semibold text-slate-700">
+                        <User className="w-3.5 h-3.5 text-slate-400" /> {session.agentName}
+                      </span>
+                    </td>
+                    <td className="py-4 text-slate-400 font-mono align-top">
+                      {new Date(session.createdAt).toLocaleDateString('fr-FR')} {new Date(session.createdAt).toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit', hour12: false})}
+                    </td>
+                    <td className="py-4">
+                      <div className="flex flex-col gap-2 max-w-md">
+                        {session.items.map((item, idx) => (
+                          <div key={idx} className="bg-slate-50 p-2 rounded-lg border border-slate-100 text-[11px] text-left">
+                            <div className="flex items-center justify-between font-bold text-slate-800 mb-1">
+                              <span>{item.gammeName}</span>
+                              <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-semibold ${
+                                item.type === 'mono' ? 'bg-blue-100/50 text-blue-700' : 'bg-amber-100/50 text-amber-700'
+                              }`}>
+                                {item.type === 'mono' ? 'Simple' : 'Palette Mixte'}
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-slate-600">
+                              {item.entries.map((e, eIdx) => (
+                                <div key={eIdx} className="flex items-center gap-1 font-medium">
+                                  <span>{e.perfume}</span>: 
+                                  <span className="font-mono bg-slate-200/50 text-slate-800 px-1 rounded text-[10px] font-bold">
+                                    {e.quantity} u
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         ))}
                       </div>
                     </td>
-                    <td className="py-3.5">
-                      <span className="inline-flex items-center gap-1 font-semibold text-slate-700">
-                        <User className="w-3.5 h-3.5 text-slate-400" /> {item.agentName}
-                      </span>
-                    </td>
-                    <td className="py-3.5 text-slate-400 font-mono">
-                      {new Date(item.createdAt).toLocaleDateString('fr-FR')} {new Date(item.createdAt).toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit', hour12: false})}
-                    </td>
-                    <td className="py-3.5 text-right">
-                      {/* Normal operators can delete only their own inventory records, admins can delete any */}
-                      {(currentUser.isAdmin || item.agentId === currentUser.id) ? (
-                        <button
-                          onClick={() => onDeleteInventoryItem(item.id)}
-                          className="p-1 px-2 border border-slate-200 rounded-lg hover:bg-rose-50 hover:border-rose-100 hover:text-rose-600 text-slate-400 transition-all font-semibold cursor-pointer"
-                          title="Supprimer cet item"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      ) : (
-                        <span className="text-slate-300 text-[10px] font-semibold italic">Verrouillé</span>
-                      )}
+                    <td className="py-4 text-right align-top">
+                      <div className="flex items-center justify-end gap-1.5">
+                        {/* Normal operators can modify/delete only their own inventory records, admins can do any */}
+                        {(currentUser.isAdmin || session.agentId === currentUser.id) ? (
+                          <>
+                            <button
+                              onClick={() => handleStartEditSession(session)}
+                              className="p-1 px-2 border border-slate-200 rounded-lg hover:bg-slate-100 text-slate-600 transition-all font-semibold cursor-pointer flex items-center gap-1"
+                              title="Modifier cet inventaire"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                              <span className="text-[10px]">Modifier</span>
+                            </button>
+                            <button
+                              onClick={() => handleDeleteSession(session)}
+                              className="p-1 px-2 border border-slate-200 rounded-lg hover:bg-rose-50 hover:border-rose-100 hover:text-rose-600 text-slate-400 transition-all font-semibold cursor-pointer flex items-center gap-1"
+                              title="Supprimer cet inventaire"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span className="text-[10px]">Supprimer</span>
+                            </button>
+                          </>
+                        ) : (
+                          <span className="text-slate-300 text-[10px] font-semibold italic">Verrouillé</span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -1066,6 +1604,97 @@ export default function Inventaire({
                   </div>
                 ));
               })()}
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* EDIT SESSION MODAL */}
+      {editingSession && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto no-print">
+          <div className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl border border-slate-200 flex flex-col max-h-[90vh]">
+            
+            {/* Header */}
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50 rounded-t-3xl text-slate-850">
+              <div className="text-left">
+                <h3 className="text-sm font-bold text-slate-900 font-sans flex items-center gap-2">
+                  <Edit2 className="w-4 h-4 text-blue-600" /> Modifier l'Inventaire {editingSession.numberCode}
+                </h3>
+                <p className="text-[11px] text-slate-500 font-sans">
+                  Saisie d'origine par {editingSession.agentName} le {new Date(editingSession.createdAt).toLocaleDateString('fr-FR')} à {new Date(editingSession.createdAt).toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit', hour12: false})}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingSession(null)}
+                className="bg-white border border-slate-200 text-slate-400 hover:text-slate-600 p-1.5 rounded-xl cursor-pointer transition-all"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 overflow-y-auto flex-1 space-y-6">
+              {editingSession.items.map((item: any) => (
+                <div key={item.id} className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-3 text-left">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs text-slate-800 uppercase tracking-wider">{item.gammeName}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                      item.type === 'mono' ? 'bg-blue-105/50 text-blue-700' : 'bg-amber-105/50 text-amber-700'
+                    }`}>
+                      {item.type === 'mono' ? 'Simple' : 'Palette Mixte'}
+                    </span>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    {(editingEntries[item.id] || []).map((entry, entryIdx) => (
+                      <div key={entryIdx} className="flex items-center justify-between gap-4 bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs">
+                        <span className="text-xs font-semibold text-slate-700">{entry.perfume}</span>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            min="1"
+                            value={entry.quantity}
+                            onChange={(e) => handleUpdateEntryQty(item.id, entry.perfume, parseInt(e.target.value, 10) || 0)}
+                            className="w-20 px-2 py-1 text-xs text-right border border-slate-200 rounded-lg focus:outline-hidden focus:ring-1 focus:ring-blue-500 font-mono font-bold text-slate-800 bg-slate-50"
+                          />
+                          <span className="text-[10px] font-bold text-slate-400">cartons</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Footer Actions */}
+            <div className="p-4 bg-slate-50 border-t border-slate-100 rounded-b-3xl flex justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setEditingSession(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 cursor-pointer bg-white border border-slate-200 rounded-xl transition-all"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveSessionEdit}
+                disabled={isUpdatingSession}
+                className="px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 cursor-pointer rounded-xl transition-all flex items-center gap-1.5 shadow-md shadow-blue-200"
+              >
+                {isUpdatingSession ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    Enregistrement...
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4" />
+                    Sauvegarder les modifications
+                  </>
+                )}
+              </button>
             </div>
 
           </div>

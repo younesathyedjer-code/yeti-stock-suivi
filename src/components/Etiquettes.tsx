@@ -283,10 +283,22 @@ export default function Etiquettes({ palettes }: EtiquettesProps) {
 
                       {/* Bottom Segment: Totals & signature */}
                       <div className="border-t-2 border-black pt-2 space-y-2">
-                        <div className="flex justify-between items-end">
-                          <div>
-                            <span className="text-[9px] uppercase font-semibold text-gray-500 block">Opérateur :</span>
-                            <span className="text-xs font-bold">{p.agentName}</span>
+                        <div className="flex justify-between items-center gap-2">
+                          <div className="flex items-center gap-2.5">
+                            {/* QR CODE DISPLAY */}
+                            <div className="border border-black p-0.5 bg-white rounded shadow-2xs shrink-0">
+                              <img 
+                                src={`https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(`PALETTE|${p.id}|${p.gammeId}|${p.gammeName}|${p.type}|${p.entries.filter(e => (e.quantityDay + e.quantityNight) > 0).map(e => `${e.perfume}:${e.quantityDay + e.quantityNight}`).join(';')}`)}`}
+                                alt="QR Code"
+                                className="w-14 h-14"
+                                referrerPolicy="no-referrer"
+                              />
+                            </div>
+                            <div>
+                              <span className="text-[9px] uppercase font-semibold text-gray-500 block">Opérateur :</span>
+                              <span className="text-xs font-bold block truncate max-w-[100px]">{p.agentName}</span>
+                              <span className="text-[8px] text-indigo-600 font-black block mt-0.5 uppercase tracking-tighter">SCAN POUR INVENTAIRE</span>
+                            </div>
                           </div>
                           
                           <div className="text-right">
@@ -381,10 +393,22 @@ export default function Etiquettes({ palettes }: EtiquettesProps) {
                       </div>
 
                       <div className="border-t-2 border-black pt-2 space-y-2">
-                        <div className="flex justify-between items-end">
-                          <div>
-                            <span className="text-[8px] uppercase font-semibold text-gray-500 block">Opérateur :</span>
-                            <span className="text-xs font-extrabold">{p.agentName}</span>
+                        <div className="flex justify-between items-center gap-2">
+                          <div className="flex items-center gap-2.5">
+                            {/* QR CODE DISPLAY */}
+                            <div className="border border-black p-0.5 bg-white rounded shadow-2xs shrink-0">
+                              <img 
+                                src={`https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(`PALETTE|${p.id}|${p.gammeId}|${p.gammeName}|${p.type}|${p.entries.filter(e => (e.quantityDay + e.quantityNight) > 0).map(e => `${e.perfume}:${e.quantityDay + e.quantityNight}`).join(';')}`)}`}
+                                alt="QR Code"
+                                className="w-14 h-14"
+                                referrerPolicy="no-referrer"
+                              />
+                            </div>
+                            <div>
+                              <span className="text-[8px] uppercase font-semibold text-gray-500 block">Opérateur :</span>
+                              <span className="text-xs font-extrabold block truncate max-w-[100px]">{p.agentName}</span>
+                              <span className="text-[8px] text-black font-black block mt-0.5 uppercase tracking-tighter">SCAN POUR INVENTAIRE</span>
+                            </div>
                           </div>
                           
                           <div className="text-right">
