@@ -1,4 +1,4 @@
-name: Deploy Firebase Hosting
+name: Firebase Auto Deploy
 
 on:
   push:
@@ -10,21 +10,27 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Récupérer le code
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      # 2. Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
 
+      # 3. Installer dépendances
       - name: Install dependencies
         run: npm install
 
+      # 4. Build Vite
       - name: Build project
         run: npm run build
 
-      - name: Deploy to Firebase Hosting
+      # 5. Déploiement Firebase Hosting
+      - name: Deploy to Firebase
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
