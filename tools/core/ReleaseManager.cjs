@@ -1,5 +1,6 @@
-class ReleaseManager {
+const { execSync } = require("child_process");
 
+class ReleaseManager {
 
     constructor(
         buildManager,
@@ -14,14 +15,13 @@ class ReleaseManager {
 
     }
 
-
-
     async release(plan) {
-
 
         const result = {
 
             build: false,
+
+            capacitorSync: false,
 
             git: false,
 
@@ -38,6 +38,18 @@ class ReleaseManager {
             );
 
             result.build = true;
+
+
+
+            execSync(
+                "npx cap sync android",
+                {
+                    cwd: process.cwd(),
+                    stdio: "inherit"
+                }
+            );
+
+            result.capacitorSync = true;
 
         }
 
@@ -61,8 +73,6 @@ class ReleaseManager {
 
     }
 
-
 }
-
 
 module.exports = ReleaseManager;
