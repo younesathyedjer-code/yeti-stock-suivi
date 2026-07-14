@@ -32,6 +32,8 @@ class UpdatePlan {
 
         this.capacitorSync = false;
 
+        this.androidRelease = false;
+
         this.firebaseDeploy = false;
 
         this.gitCommit = false;
@@ -51,7 +53,6 @@ class UpdatePlan {
         this.packageHash = null;
 
         this.rollbackAvailable = false;
-
 
 
     }
@@ -176,6 +177,8 @@ class UpdatePlan {
 
             capacitorSync:this.capacitorSync,
 
+            androidRelease:this.androidRelease,
+
             firebaseDeploy:this.firebaseDeploy,
 
             gitCommit:this.gitCommit,
@@ -195,7 +198,6 @@ class UpdatePlan {
 
 
     }
-
 
 
 }
