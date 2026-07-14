@@ -8,14 +8,16 @@ const UpdateEngine =
     require("./UpdateEngine.cjs");
 
 
+
 class CoreRunner {
 
 
-    constructor() {
+    constructor(){
 
 
         this.engine =
             new UpdateEngine();
+
 
 
 
@@ -24,28 +26,43 @@ class CoreRunner {
 
 
 
+
         this.report =
             new Core.UpdateReport();
+
+
 
 
 
         this.release =
             new Core.ReleaseManager(
 
+
                 new Core.BuildManager(
                     CoreConfig
                 ),
 
+
                 new Core.GitManager(
                     CoreConfig
+                ),
+
+
+                new Core.ApkManager(
+                    CoreConfig
                 )
+
 
             );
 
 
 
+
+
         this.releaseReport =
             new Core.ReleaseReport();
+
+
 
 
 
@@ -60,10 +77,14 @@ class CoreRunner {
 
 
 
-    async run() {
+
+
+
+    async run(){
 
 
         console.clear();
+
 
 
         console.log("");
@@ -78,6 +99,8 @@ class CoreRunner {
 
 
 
+
+
         const ok =
             await this.ui.confirm(
                 "Lancer la mise à jour ?"
@@ -85,7 +108,9 @@ class CoreRunner {
 
 
 
-        if (!ok) {
+
+
+        if(!ok){
 
 
             console.log("");
@@ -103,21 +128,24 @@ class CoreRunner {
 
 
 
-        let plan = null;
 
 
 
-        try {
+        try{
 
 
-            plan =
+            const plan =
                 await this.engine.start();
+
+
 
 
 
             this.report.display(
                 plan
             );
+
+
 
 
 
@@ -128,9 +156,13 @@ class CoreRunner {
 
 
 
+
+
             this.releaseReport.display(
                 releaseResult
             );
+
+
 
 
 
@@ -144,7 +176,8 @@ class CoreRunner {
         }
 
 
-        catch(error) {
+
+        catch(error){
 
 
             console.log("");
@@ -165,6 +198,7 @@ class CoreRunner {
 
 
 }
+
 
 
 module.exports = CoreRunner;

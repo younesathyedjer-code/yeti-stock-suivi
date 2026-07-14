@@ -6,20 +6,23 @@ class PlanBuilder {
 
     constructor(manifest, files = {}) {
 
+
         this.manifest = manifest;
 
         this.files = files;
+
 
     }
 
 
 
 
-    build() {
+
+    build(){
 
 
-        const plan =
-            new UpdatePlan();
+        const plan = new UpdatePlan();
+
 
 
 
@@ -49,8 +52,8 @@ class PlanBuilder {
 
 
 
-        plan.androidRelease =
-            this.manifest.androidRelease || false;
+        plan.apkBuild =
+            this.manifest.apkBuild || false;
 
 
 
@@ -65,13 +68,27 @@ class PlanBuilder {
 
 
 
+        if(this.manifest.apkPath){
 
-        for (const file of this.files.added || []) {
+
+            plan.apkPath =
+                this.manifest.apkPath;
+
+
+        }
+
+
+
+
+        for(const file of this.files.added || []){
 
 
             plan.addCopy(
+
                 file,
+
                 file
+
             );
 
 
@@ -80,13 +97,15 @@ class PlanBuilder {
 
 
 
-
-        for (const file of this.files.modified || []) {
+        for(const file of this.files.modified || []){
 
 
             plan.addCopy(
+
                 file,
+
                 file
+
             );
 
 

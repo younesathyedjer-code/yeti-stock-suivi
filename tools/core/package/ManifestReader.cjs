@@ -8,11 +8,9 @@ class ManifestReader {
     constructor(packagePath) {
 
         this.packagePath = packagePath;
-
         this.manifest = null;
 
     }
-
 
 
 
@@ -26,17 +24,13 @@ class ManifestReader {
             );
 
 
-
         if (!fs.existsSync(file)) {
-
 
             throw new Error(
                 "manifest.json introuvable."
             );
 
-
         }
-
 
 
 
@@ -49,7 +43,6 @@ class ManifestReader {
             );
 
 
-
         return this.manifest;
 
 
@@ -58,30 +51,20 @@ class ManifestReader {
 
 
 
-
-
     getVersion() {
-
 
         return this.manifest?.version || null;
 
-
     }
-
-
 
 
 
 
     getDescription() {
 
-
         return this.manifest?.description || "";
 
-
     }
-
-
 
 
 
@@ -96,20 +79,16 @@ class ManifestReader {
                 this.manifest?.build || false,
 
 
-
             capacitorSync:
                 this.manifest?.capacitorSync || false,
 
 
-
-            androidRelease:
-                this.manifest?.androidRelease || false,
-
+            apkBuild:
+                this.manifest?.apkBuild || false,
 
 
             firebaseDeploy:
                 this.manifest?.firebaseDeploy || false,
-
 
 
             gitCommit:

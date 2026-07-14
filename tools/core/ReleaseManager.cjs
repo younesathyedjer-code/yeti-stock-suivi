@@ -1,78 +1,130 @@
-const { execSync } = require("child_process");
-
 class ReleaseManager {
+
 
     constructor(
         buildManager,
-        gitManager
+        gitManager,
+        apkManager
     ) {
+
 
         this.buildManager =
             buildManager;
 
+
         this.gitManager =
             gitManager;
 
+
+        this.apkManager =
+            apkManager;
+
+
     }
+
+
+
+
 
     async release(plan) {
 
+
         const result = {
 
-            build: false,
 
-            capacitorSync: false,
+            build:false,
 
-            git: false,
+            capacitorSync:false,
 
-            success: false
+            apk:false,
+
+            git:false,
+
+            success:false
+
 
         };
 
 
 
-        if (plan.build) {
+
+
+        if(plan.build){
+
 
             await this.buildManager.execute(
                 plan
             );
 
+
             result.build = true;
 
-
-
-            execSync(
-                "npx cap sync android",
-                {
-                    cwd: process.cwd(),
-                    stdio: "inherit"
-                }
-            );
-
-            result.capacitorSync = true;
 
         }
 
 
 
-        if (plan.gitCommit) {
+
+
+
+        if(plan.capacitorSync){
+
+
+            result.capacitorSync = true;
+
+
+        }
+
+
+
+
+
+        if(plan.apkBuild){
+
+
+            const apk =
+                await this.apkManager.execute(
+                    plan
+                );
+
+
+            result.apk = apk;
+
+
+        }
+
+
+
+
+
+
+        if(plan.gitCommit){
+
 
             await this.gitManager.execute(
                 plan
             );
 
+
             result.git = true;
+
 
         }
 
 
 
+
+
         result.success = true;
+
 
         return result;
 
+
     }
 
+
 }
+
 
 module.exports = ReleaseManager;

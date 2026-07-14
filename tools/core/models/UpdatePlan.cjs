@@ -32,11 +32,19 @@ class UpdatePlan {
 
         this.capacitorSync = false;
 
-        this.androidRelease = false;
+        this.apkBuild = false;
 
         this.firebaseDeploy = false;
 
         this.gitCommit = false;
+
+
+
+        // Informations APK
+
+        this.apkPath = null;
+
+        this.apkGenerated = false;
 
 
 
@@ -164,6 +172,7 @@ class UpdatePlan {
             author:this.author,
 
 
+
             copies:this.copies,
 
             deletes:this.deletes,
@@ -173,20 +182,29 @@ class UpdatePlan {
             moves:this.moves,
 
 
+
             build:this.build,
 
             capacitorSync:this.capacitorSync,
 
-            androidRelease:this.androidRelease,
+            apkBuild:this.apkBuild,
 
             firebaseDeploy:this.firebaseDeploy,
 
             gitCommit:this.gitCommit,
 
 
+
+            apkPath:this.apkPath,
+
+            apkGenerated:this.apkGenerated,
+
+
+
             blockedActions:this.blockedActions,
 
             requireConfirmation:this.requireConfirmation,
+
 
 
             packageHash:this.packageHash,

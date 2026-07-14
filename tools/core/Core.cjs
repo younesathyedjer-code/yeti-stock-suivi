@@ -47,6 +47,9 @@ module.exports = {
     BuildManager:
         load("services/BuildManager.cjs"),
 
+ApkManager:
+    load("services/ApkManager.cjs"),
+
     GitManager:
         load("services/GitManager.cjs"),
 
@@ -64,5 +67,7 @@ module.exports = {
 
     RestoreEngine:
         load("RestoreEngine.cjs")
+
+
 
 };
