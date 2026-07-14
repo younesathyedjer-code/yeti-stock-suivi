@@ -1,5 +1,6 @@
 const UpdatePlan = require("../models/UpdatePlan.cjs");
 
+
 class PlanBuilder {
 
 
@@ -13,6 +14,7 @@ class PlanBuilder {
 
 
 
+
     build() {
 
 
@@ -20,12 +22,15 @@ class PlanBuilder {
             new UpdatePlan();
 
 
+
         plan.version =
             this.manifest.version || null;
 
 
+
         plan.description =
             this.manifest.description || "";
+
 
 
         plan.author =
@@ -33,20 +38,31 @@ class PlanBuilder {
 
 
 
+
         plan.build =
             this.manifest.build || false;
+
 
 
         plan.capacitorSync =
             this.manifest.capacitorSync || false;
 
 
+
+        plan.androidRelease =
+            this.manifest.androidRelease || false;
+
+
+
         plan.firebaseDeploy =
             this.manifest.firebaseDeploy || false;
 
 
+
         plan.gitCommit =
             this.manifest.gitCommit || false;
+
+
 
 
 
@@ -63,6 +79,8 @@ class PlanBuilder {
 
 
 
+
+
         for (const file of this.files.modified || []) {
 
 
@@ -73,6 +91,7 @@ class PlanBuilder {
 
 
         }
+
 
 
 
