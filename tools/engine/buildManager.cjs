@@ -1,33 +1,22 @@
 const { execSync } = require("child_process");
 
-
-
 class BuildManager {
-
 
 
     constructor(config, manifest){
 
-
         this.config = config;
-
         this.manifest = manifest;
-
 
     }
 
 
 
-
-
     run(command){
-
-
 
         console.log(
             "\n> " + command
         );
-
 
 
         execSync(
@@ -38,16 +27,13 @@ class BuildManager {
             }
         );
 
-
     }
 
 
 
 
 
-
     build(){
-
 
 
         console.log(
@@ -62,7 +48,6 @@ class BuildManager {
         ){
 
 
-
             console.log(
                 "Build web demandé."
             );
@@ -71,7 +56,6 @@ class BuildManager {
             this.run(
                 "npm run build"
             );
-
 
 
         }
@@ -95,11 +79,9 @@ class BuildManager {
         ){
 
 
-
             console.log(
                 "Synchronisation Capacitor demandée."
             );
-
 
 
             this.run(
@@ -122,6 +104,36 @@ class BuildManager {
 
 
 
+        if(
+            this.manifest &&
+            this.manifest.androidRelease === true
+        ){
+
+
+            console.log(
+                "Generation APK Release demandée."
+            );
+
+
+            this.run(
+                "android\\gradlew.bat assembleRelease"
+            );
+
+
+        }
+        else{
+
+
+            console.log(
+                "APK Release ignorée."
+            );
+
+
+        }
+
+
+
+
 
         if(
             this.manifest &&
@@ -129,11 +141,9 @@ class BuildManager {
         ){
 
 
-
             console.log(
                 "Firebase deploy demandé."
             );
-
 
 
             console.log(
@@ -145,13 +155,13 @@ class BuildManager {
 
 
 
+
         console.log(
             "\nBUILD MANAGER terminé."
         );
 
 
     }
-
 
 
 }
