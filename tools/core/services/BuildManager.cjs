@@ -12,7 +12,10 @@ class BuildManager {
 
 
 
+
+
     run(command) {
+
 
         console.log("\n> " + command);
 
@@ -20,10 +23,11 @@ class BuildManager {
         execSync(
             command,
             {
-                cwd: this.config.projectRoot,
-                stdio: "inherit"
+                cwd:this.config.projectRoot,
+                stdio:"inherit"
             }
         );
+
 
     }
 
@@ -38,7 +42,8 @@ class BuildManager {
 
 
 
-        if (plan.build) {
+
+        if(plan.build === true) {
 
 
             console.log(
@@ -66,7 +71,7 @@ class BuildManager {
 
 
 
-        if (plan.capacitorSync) {
+        if(plan.capacitorSync === true) {
 
 
             console.log(
@@ -94,7 +99,7 @@ class BuildManager {
 
 
 
-        if (plan.androidRelease) {
+        if(plan.androidRelease === true) {
 
 
             console.log(
@@ -117,6 +122,8 @@ class BuildManager {
 
 
         }
+
+
 
 
 
