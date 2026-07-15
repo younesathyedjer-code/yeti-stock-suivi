@@ -24,59 +24,60 @@ class BuildManager {
 
         console.log("\nBUILD MANAGER");
 
-        // -----------------------------
-        // Build WEB
-        // -----------------------------
 
-        if (plan.build) {
+
+        if(plan.build){
 
             console.log("Build web demandé.");
 
             this.run("npm run build");
 
-        } else {
+        }
+        else{
 
             console.log("Build web ignoré.");
 
         }
 
-        // -----------------------------
-        // Capacitor Sync
-        // -----------------------------
 
-        if (plan.capacitorSync) {
+
+
+        if(plan.capacitorSync){
 
             console.log("Synchronisation Capacitor demandée.");
 
             this.run("npx cap sync android");
 
-        } else {
+        }
+        else{
 
             console.log("Capacitor sync ignoré.");
 
         }
 
-        // -----------------------------
-        // APK Release
-        // -----------------------------
 
-        if (plan.apkRelease) {
+
+
+        if(plan.apkBuild){
 
             console.log("Génération APK Release...");
 
-            const androidFolder = path.join(
-                this.config.projectRoot,
-                "android"
-            );
+            const androidFolder =
+                path.join(
+                    this.config.projectRoot,
+                    "android"
+                );
 
-            if (process.platform === "win32") {
+
+            if(process.platform==="win32"){
 
                 this.run(
                     "gradlew.bat assembleRelease",
                     androidFolder
                 );
 
-            } else {
+            }
+            else{
 
                 this.run(
                     "./gradlew assembleRelease",
@@ -85,9 +86,13 @@ class BuildManager {
 
             }
 
-            console.log("\nAPK RELEASE GÉNÉRÉE");
+
+            console.log("");
+
+            console.log("APK RELEASE GÉNÉRÉE");
 
             console.log(
+
                 path.join(
                     this.config.projectRoot,
                     "android",
@@ -95,23 +100,25 @@ class BuildManager {
                     "release",
                     "app-release.apk"
                 )
+
             );
 
-        } else {
+        }
+        else{
 
             console.log("APK Release ignorée.");
 
         }
 
-        // -----------------------------
-        // Firebase
-        // -----------------------------
 
-        if (plan.firebaseDeploy) {
+
+
+        if(plan.firebaseDeploy){
 
             console.log("Firebase Deploy demandé.");
 
         }
+
 
         console.log("\nBUILD MANAGER terminé.");
 
