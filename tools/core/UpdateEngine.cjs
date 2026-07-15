@@ -7,10 +7,11 @@ const CoreConfig =
 class UpdateEngine {
 
 
-    constructor() {
+    constructor(){
 
 
-        this.config = CoreConfig;
+        this.config =
+            CoreConfig;
 
 
         this.logger =
@@ -27,10 +28,8 @@ class UpdateEngine {
             new Core.PackageAnalyzer();
 
 
-
         this.diffBuilder =
             new Core.DiffBuilder();
-
 
 
         this.planValidator =
@@ -39,12 +38,10 @@ class UpdateEngine {
             );
 
 
-
         this.fileManager =
             new Core.FileManager(
                 this.config
             );
-
 
 
         this.backupManager =
@@ -53,11 +50,13 @@ class UpdateEngine {
             );
 
 
-
         this.transactionManager =
             new Core.TransactionManager(
+
                 this.fileManager,
+
                 this.backupManager
+
             );
 
 
@@ -66,7 +65,7 @@ class UpdateEngine {
 
 
 
-    async start() {
+    async start(){
 
 
         this.logger.success(
@@ -94,10 +93,15 @@ class UpdateEngine {
 
 
 
-        const manifest =
+        const manifestReader =
             new Core.ManifestReader(
                 info.root
-            ).load();
+            );
+
+
+
+        const manifest =
+            manifestReader.load();
 
 
 
@@ -108,15 +112,27 @@ class UpdateEngine {
 
 
 
-        const plan =
+        const planBuilder =
             new Core.PlanBuilder(
+
                 manifest,
+
                 {
-                    added: files,
-                    modified: [],
-                    deleted: []
+
+                    added:files,
+
+                    modified:[],
+
+                    deleted:[]
+
                 }
-            ).build();
+
+            );
+
+
+
+        const plan =
+            planBuilder.build();
 
 
 
@@ -127,7 +143,7 @@ class UpdateEngine {
 
 
 
-        if (!validation.valid) {
+        if(!validation.valid){
 
             throw new Error(
                 "PLAN INVALID"
@@ -150,16 +166,23 @@ class UpdateEngine {
 
         const transaction =
             this.transactionManager.execute(
-    plan,
-    info.root
-);
+
+                plan,
+
+                info.root
+
+            );
 
 
 
         this.logger.success(
+
             "TRANSACTION : " +
+
             transaction.success
+
         );
+
 
 
         return plan;
@@ -169,6 +192,5 @@ class UpdateEngine {
 
 
 }
-
 
 module.exports = UpdateEngine;

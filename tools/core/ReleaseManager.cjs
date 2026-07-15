@@ -2,10 +2,12 @@ class ReleaseManager {
 
 
     constructor(
+
         buildManager,
-        gitManager,
-        apkManager
-    ) {
+
+        gitManager
+
+    ){
 
 
         this.buildManager =
@@ -16,17 +18,13 @@ class ReleaseManager {
             gitManager;
 
 
-        this.apkManager =
-            apkManager;
-
-
     }
 
 
 
 
 
-    async release(plan) {
+    async release(plan){
 
 
         const result = {
@@ -49,7 +47,15 @@ class ReleaseManager {
 
 
 
-        if(plan.build){
+        if(
+
+            plan.build ||
+
+            plan.capacitorSync ||
+
+            plan.apkBuild
+
+        ){
 
 
             await this.buildManager.execute(
@@ -57,38 +63,23 @@ class ReleaseManager {
             );
 
 
-            result.build = true;
 
-
-        }
-
-
-
-
-
-
-        if(plan.capacitorSync){
-
-
-            result.capacitorSync = true;
-
-
-        }
-
-
-
-
-
-        if(plan.apkBuild){
-
-
-            const apk =
-                await this.apkManager.execute(
-                    plan
+            result.build =
+                Boolean(
+                    plan.build
                 );
 
 
-            result.apk = apk;
+            result.capacitorSync =
+                Boolean(
+                    plan.capacitorSync
+                );
+
+
+            result.apk =
+                Boolean(
+                    plan.apkBuild
+                );
 
 
         }
@@ -116,6 +107,7 @@ class ReleaseManager {
 
 
         result.success = true;
+
 
 
         return result;

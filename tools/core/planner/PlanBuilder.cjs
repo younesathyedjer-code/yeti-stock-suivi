@@ -1,19 +1,20 @@
-const UpdatePlan = require("../models/UpdatePlan.cjs");
+const UpdatePlan =
+    require("../models/UpdatePlan.cjs");
 
 
-class PlanBuilder {
+class PlanBuilder{
 
 
-    constructor(manifest, files = {}) {
-
+    constructor(
+        manifest,
+        files={}
+    ){
 
         this.manifest = manifest;
 
         this.files = files;
 
-
     }
-
 
 
 
@@ -21,93 +22,87 @@ class PlanBuilder {
     build(){
 
 
-        const plan = new UpdatePlan();
+        const plan =
+            new UpdatePlan();
 
 
 
 
         plan.version =
-            this.manifest.version || null;
-
+            this.manifest.version ?? "";
 
 
         plan.description =
-            this.manifest.description || "";
-
+            this.manifest.description ?? "";
 
 
         plan.author =
-            this.manifest.author || null;
+            this.manifest.author ?? "";
 
 
 
 
         plan.build =
-            this.manifest.build || false;
-
+            Boolean(
+                this.manifest.build
+            );
 
 
         plan.capacitorSync =
-            this.manifest.capacitorSync || false;
-
+            Boolean(
+                this.manifest.capacitorSync
+            );
 
 
         plan.apkBuild =
-            this.manifest.apkBuild || false;
-
+            Boolean(
+                this.manifest.apkBuild
+            );
 
 
         plan.firebaseDeploy =
-            this.manifest.firebaseDeploy || false;
-
+            Boolean(
+                this.manifest.firebaseDeploy
+            );
 
 
         plan.gitCommit =
-            this.manifest.gitCommit || false;
+            Boolean(
+                this.manifest.gitCommit
+            );
 
 
 
 
-        if(this.manifest.apkPath){
+        for(const file of this.files.added||[]){
 
-
-            plan.apkPath =
-                this.manifest.apkPath;
-
+            plan.addCopy(
+                file,
+                file
+            );
 
         }
 
 
 
 
-        for(const file of this.files.added || []){
-
+        for(const file of this.files.modified||[]){
 
             plan.addCopy(
-
                 file,
-
                 file
-
             );
-
 
         }
 
 
 
 
-        for(const file of this.files.modified || []){
+        for(const file of this.files.deleted||[]){
 
-
-            plan.addCopy(
-
-                file,
-
+            plan.addDelete(
                 file
-
             );
-
 
         }
 

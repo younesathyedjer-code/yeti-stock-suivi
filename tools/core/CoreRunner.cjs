@@ -1,4 +1,6 @@
-const Core = require("./Core.cjs");
+const Core =
+    require("./Core.cjs");
+
 
 const CoreConfig =
     require("./config/ConfigLoader.cjs");
@@ -20,17 +22,13 @@ class CoreRunner {
 
 
 
-
         this.ui =
             new Core.ConsoleUI();
 
 
 
-
         this.report =
             new Core.UpdateReport();
-
-
 
 
 
@@ -43,12 +41,8 @@ class CoreRunner {
                 ),
 
 
+
                 new Core.GitManager(
-                    CoreConfig
-                ),
-
-
-                new Core.ApkManager(
                     CoreConfig
                 )
 
@@ -57,23 +51,11 @@ class CoreRunner {
 
 
 
-
-
         this.releaseReport =
             new Core.ReleaseReport();
 
 
-
-
-
-        this.restore =
-            new Core.RestoreManager(
-                CoreConfig
-            );
-
-
     }
-
 
 
 
@@ -89,11 +71,17 @@ class CoreRunner {
 
         console.log("");
 
-        console.log("========================================");
+        console.log(
+            "========================================"
+        );
 
-        console.log("        YETI UPDATE MANAGER v5");
+        console.log(
+            "        YETI UPDATE MANAGER v5"
+        );
 
-        console.log("========================================");
+        console.log(
+            "========================================"
+        );
 
         console.log("");
 
@@ -109,17 +97,13 @@ class CoreRunner {
 
 
 
-
         if(!ok){
 
-
-            console.log("");
 
             console.log(
                 "Mise à jour annulée."
             );
 
-            console.log("");
 
             return;
 
@@ -140,11 +124,9 @@ class CoreRunner {
 
 
 
-
             this.report.display(
                 plan
             );
-
 
 
 
@@ -157,11 +139,9 @@ class CoreRunner {
 
 
 
-
             this.releaseReport.display(
                 releaseResult
             );
-
 
 
 
@@ -173,8 +153,8 @@ class CoreRunner {
             );
 
 
-        }
 
+        }
 
 
         catch(error){
@@ -194,11 +174,11 @@ class CoreRunner {
         }
 
 
+
     }
 
 
 }
-
 
 
 module.exports = CoreRunner;

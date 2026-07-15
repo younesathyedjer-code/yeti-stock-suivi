@@ -4,17 +4,16 @@ class UpdatePlan {
     constructor(){
 
 
-        this.version = null;
+        this.version = "";
 
-        this.description = null;
+        this.description = "";
 
-        this.createdAt = new Date().toISOString();
+        this.author = "";
 
-        this.author = null;
+        this.createdAt =
+            new Date().toISOString();
 
 
-
-        // Actions fichiers
 
         this.copies = [];
 
@@ -25,8 +24,6 @@ class UpdatePlan {
         this.moves = [];
 
 
-
-        // Actions système
 
         this.build = false;
 
@@ -40,23 +37,9 @@ class UpdatePlan {
 
 
 
-        // Informations APK
-
-        this.apkPath = null;
-
-        this.apkGenerated = false;
-
-
-
-        // Sécurité
-
         this.blockedActions = [];
 
         this.requireConfirmation = true;
-
-
-
-        // Sécurité transaction
 
         this.packageHash = null;
 
@@ -69,8 +52,8 @@ class UpdatePlan {
 
 
 
-    addCopy(source,target){
 
+    addCopy(source,target){
 
         this.copies.push({
 
@@ -80,7 +63,6 @@ class UpdatePlan {
 
         });
 
-
     }
 
 
@@ -89,9 +71,7 @@ class UpdatePlan {
 
     addDelete(file){
 
-
         this.deletes.push(file);
-
 
     }
 
@@ -101,7 +81,6 @@ class UpdatePlan {
 
     addRename(from,to){
 
-
         this.renames.push({
 
             from,
@@ -109,7 +88,6 @@ class UpdatePlan {
             to
 
         });
-
 
     }
 
@@ -119,7 +97,6 @@ class UpdatePlan {
 
     addMove(from,to){
 
-
         this.moves.push({
 
             from,
@@ -127,7 +104,6 @@ class UpdatePlan {
             to
 
         });
-
 
     }
 
@@ -137,19 +113,17 @@ class UpdatePlan {
 
     hasActions(){
 
-
         return (
 
-            this.copies.length > 0 ||
+            this.copies.length>0 ||
 
-            this.deletes.length > 0 ||
+            this.deletes.length>0 ||
 
-            this.renames.length > 0 ||
+            this.renames.length>0 ||
 
-            this.moves.length > 0
+            this.moves.length>0
 
         );
-
 
     }
 
@@ -159,61 +133,60 @@ class UpdatePlan {
 
     toJSON(){
 
-
         return {
 
+            version:
+                this.version,
 
-            version:this.version,
+            description:
+                this.description,
 
-            description:this.description,
+            author:
+                this.author,
 
-            createdAt:this.createdAt,
+            createdAt:
+                this.createdAt,
 
-            author:this.author,
+            copies:
+                this.copies,
 
+            deletes:
+                this.deletes,
 
+            renames:
+                this.renames,
 
-            copies:this.copies,
+            moves:
+                this.moves,
 
-            deletes:this.deletes,
+            build:
+                this.build,
 
-            renames:this.renames,
+            capacitorSync:
+                this.capacitorSync,
 
-            moves:this.moves,
+            apkBuild:
+                this.apkBuild,
 
+            firebaseDeploy:
+                this.firebaseDeploy,
 
+            gitCommit:
+                this.gitCommit,
 
-            build:this.build,
+            blockedActions:
+                this.blockedActions,
 
-            capacitorSync:this.capacitorSync,
+            requireConfirmation:
+                this.requireConfirmation,
 
-            apkBuild:this.apkBuild,
+            packageHash:
+                this.packageHash,
 
-            firebaseDeploy:this.firebaseDeploy,
-
-            gitCommit:this.gitCommit,
-
-
-
-            apkPath:this.apkPath,
-
-            apkGenerated:this.apkGenerated,
-
-
-
-            blockedActions:this.blockedActions,
-
-            requireConfirmation:this.requireConfirmation,
-
-
-
-            packageHash:this.packageHash,
-
-            rollbackAvailable:this.rollbackAvailable
-
+            rollbackAvailable:
+                this.rollbackAvailable
 
         };
-
 
     }
 

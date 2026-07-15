@@ -1,30 +1,31 @@
 const fs = require("fs");
 const path = require("path");
 
-
 class ManifestReader {
 
 
-    constructor(packagePath) {
+    constructor(packagePath){
 
         this.packagePath = packagePath;
+
         this.manifest = null;
 
     }
 
 
 
-    load() {
+
+    load(){
 
 
-        const file =
+        const manifestFile =
             path.join(
                 this.packagePath,
                 "manifest.json"
             );
 
 
-        if (!fs.existsSync(file)) {
+        if(!fs.existsSync(manifestFile)){
 
             throw new Error(
                 "manifest.json introuvable."
@@ -33,13 +34,44 @@ class ManifestReader {
         }
 
 
-
         this.manifest =
             JSON.parse(
+
                 fs.readFileSync(
-                    file,
+                    manifestFile,
                     "utf8"
                 )
+
+            );
+
+
+        this.manifest.build =
+            Boolean(
+                this.manifest.build
+            );
+
+
+        this.manifest.capacitorSync =
+            Boolean(
+                this.manifest.capacitorSync
+            );
+
+
+        this.manifest.apkBuild =
+            Boolean(
+                this.manifest.apkBuild
+            );
+
+
+        this.manifest.firebaseDeploy =
+            Boolean(
+                this.manifest.firebaseDeploy
+            );
+
+
+        this.manifest.gitCommit =
+            Boolean(
+                this.manifest.gitCommit
             );
 
 
@@ -49,59 +81,6 @@ class ManifestReader {
     }
 
 
-
-
-    getVersion() {
-
-        return this.manifest?.version || null;
-
-    }
-
-
-
-
-    getDescription() {
-
-        return this.manifest?.description || "";
-
-    }
-
-
-
-
-    getOptions() {
-
-
-        return {
-
-
-            build:
-                this.manifest?.build || false,
-
-
-            capacitorSync:
-                this.manifest?.capacitorSync || false,
-
-
-            apkBuild:
-                this.manifest?.apkBuild || false,
-
-
-            firebaseDeploy:
-                this.manifest?.firebaseDeploy || false,
-
-
-            gitCommit:
-                this.manifest?.gitCommit || false
-
-
-        };
-
-
-    }
-
-
 }
-
 
 module.exports = ManifestReader;
