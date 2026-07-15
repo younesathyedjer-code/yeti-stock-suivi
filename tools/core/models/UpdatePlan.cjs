@@ -4,14 +4,14 @@ class UpdatePlan {
     constructor(){
 
 
-        this.version = "";
+        this.version = null;
 
-        this.description = "";
-
-        this.author = "";
+        this.description = null;
 
         this.createdAt =
             new Date().toISOString();
+
+        this.author = null;
 
 
 
@@ -29,7 +29,7 @@ class UpdatePlan {
 
         this.capacitorSync = false;
 
-        this.apkBuild = false;
+        this.apkRelease = false;
 
         this.firebaseDeploy = false;
 
@@ -40,6 +40,8 @@ class UpdatePlan {
         this.blockedActions = [];
 
         this.requireConfirmation = true;
+
+
 
         this.packageHash = null;
 
@@ -52,8 +54,8 @@ class UpdatePlan {
 
 
 
-
     addCopy(source,target){
+
 
         this.copies.push({
 
@@ -63,6 +65,7 @@ class UpdatePlan {
 
         });
 
+
     }
 
 
@@ -71,7 +74,9 @@ class UpdatePlan {
 
     addDelete(file){
 
+
         this.deletes.push(file);
+
 
     }
 
@@ -81,6 +86,7 @@ class UpdatePlan {
 
     addRename(from,to){
 
+
         this.renames.push({
 
             from,
@@ -88,6 +94,7 @@ class UpdatePlan {
             to
 
         });
+
 
     }
 
@@ -97,6 +104,7 @@ class UpdatePlan {
 
     addMove(from,to){
 
+
         this.moves.push({
 
             from,
@@ -104,6 +112,7 @@ class UpdatePlan {
             to
 
         });
+
 
     }
 
@@ -113,17 +122,19 @@ class UpdatePlan {
 
     hasActions(){
 
+
         return (
 
-            this.copies.length>0 ||
+            this.copies.length > 0 ||
 
-            this.deletes.length>0 ||
+            this.deletes.length > 0 ||
 
-            this.renames.length>0 ||
+            this.renames.length > 0 ||
 
-            this.moves.length>0
+            this.moves.length > 0
 
         );
+
 
     }
 
@@ -133,60 +144,51 @@ class UpdatePlan {
 
     toJSON(){
 
+
         return {
 
-            version:
-                this.version,
 
-            description:
-                this.description,
+            version:this.version,
 
-            author:
-                this.author,
+            description:this.description,
 
-            createdAt:
-                this.createdAt,
+            createdAt:this.createdAt,
 
-            copies:
-                this.copies,
+            author:this.author,
 
-            deletes:
-                this.deletes,
 
-            renames:
-                this.renames,
+            copies:this.copies,
 
-            moves:
-                this.moves,
+            deletes:this.deletes,
 
-            build:
-                this.build,
+            renames:this.renames,
 
-            capacitorSync:
-                this.capacitorSync,
+            moves:this.moves,
 
-            apkBuild:
-                this.apkBuild,
 
-            firebaseDeploy:
-                this.firebaseDeploy,
+            build:this.build,
 
-            gitCommit:
-                this.gitCommit,
+            capacitorSync:this.capacitorSync,
 
-            blockedActions:
-                this.blockedActions,
+            apkRelease:this.apkRelease,
 
-            requireConfirmation:
-                this.requireConfirmation,
+            firebaseDeploy:this.firebaseDeploy,
 
-            packageHash:
-                this.packageHash,
+            gitCommit:this.gitCommit,
 
-            rollbackAvailable:
-                this.rollbackAvailable
+
+            blockedActions:this.blockedActions,
+
+            requireConfirmation:this.requireConfirmation,
+
+
+            packageHash:this.packageHash,
+
+            rollbackAvailable:this.rollbackAvailable
+
 
         };
+
 
     }
 
