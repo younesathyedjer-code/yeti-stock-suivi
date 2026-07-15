@@ -1,112 +1,89 @@
-import tailwindcss from "@tailwindcss/vite";
-import react from "@vitejs/plugin-react";
-import path from "path";
-import { defineConfig } from "vite";
+import tailwindcss from '@tailwindcss/vite';
+import react from '@vitejs/plugin-react';
+import path from 'path';
+import { defineConfig } from 'vite';
 
-export default defineConfig(() => {
+export default defineConfig({
 
-    return {
-
-        plugins: [
-            react(),
-            tailwindcss()
-        ],
+  plugins: [
+    react(),
+    tailwindcss()
+  ],
 
 
-        resolve: {
+  resolve: {
 
-            alias: {
+    alias: {
 
-                "@":
-                    path.resolve(
-                        __dirname,
-                        "."
-                    )
+      '@': path.resolve(__dirname, '.')
+
+    }
+
+  },
+
+
+  build: {
+
+    rollupOptions: {
+
+      output: {
+
+        manualChunks(id) {
+
+
+          if (id.includes('node_modules')) {
+
+
+            if (id.includes('react')) {
+
+              return 'react';
 
             }
 
-        },
+
+            if (id.includes('firebase')) {
+
+              return 'firebase';
+
+            }
 
 
-        build: {
+            if (
+              id.includes('lucide') ||
+              id.includes('icons')
+            ) {
 
-            rollupOptions: {
+              return 'icons';
 
-                output: {
-
-                    manualChunks(id) {
-
-
-                        if (
-                            id.includes(
-                                "node_modules/react"
-                            )
-                        ) {
-
-                            return "react";
-
-                        }
+            }
 
 
-                        if (
-                            id.includes(
-                                "node_modules/lucide-react"
-                            )
-                        ) {
-
-                            return "icons";
-
-                        }
+            return 'vendor';
 
 
-                        if (
-                            id.includes(
-                                "node_modules/firebase"
-                            )
-                        ) {
+          }
 
-                            return "firebase";
-
-                        }
-
-
-                        if (
-                            id.includes(
-                                "node_modules"
-                            )
-                        ) {
-
-                            return "vendor";
-
-                        }
-
-                    }
-
-                }
-
-            },
-
-
-            chunkSizeWarningLimit:
-                1500
-
-        },
-
-
-        server: {
-
-            hmr:
-                process.env.DISABLE_HMR !== "true",
-
-
-            watch:
-                process.env.DISABLE_HMR === "true"
-                    ? null
-                    : {}
 
         }
 
+      }
 
-    };
+    }
+
+  },
+
+
+  server: {
+
+    hmr:
+      process.env.DISABLE_HMR !== 'true',
+
+
+    watch:
+      process.env.DISABLE_HMR === 'true'
+        ? null
+        : {}
+
+  }
 
 });
