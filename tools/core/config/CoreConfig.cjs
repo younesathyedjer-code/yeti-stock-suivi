@@ -1,52 +1,25 @@
-module.exports = {
+const path = require('path');
 
-    projectRoot: process.cwd(),
+const ROOT_DIR = path.resolve(__dirname, '../../..');
 
-    iaFolder:
-        "C:\\YETISTOCK\\IA",
-
-    tempFolder:
-        "C:\\YETISTOCK\\TempUpdate",
-
-    backupFolder:
-        "C:\\YETISTOCK\\Backups",
-
-
-    ignore: [
-
-        "node_modules",
-        "dist",
-        "build",
-        ".git",
-        ".idea",
-        ".gradle",
-        ".firebase",
-        "TempUpdate",
-        "Backups"
-
-    ],
-
-
-    protectedFiles: [
-
-        "firebase.json",
-        "capacitor.config.ts",
-        ".env",
-        ".gitignore"
-
-    ],
-
-
-    protectedFolders: [
-
-        "android",
-        ".github",
-        "tools"
-
-    ],
-
-
-    gitBranch:
-        "main"
-
+const CoreConfig = {
+  paths: {
+    root: ROOT_DIR,
+    manifest: path.join(ROOT_DIR, 'manifest.json'),
+    src: path.join(ROOT_DIR, 'src'),
+    dist: path.join(ROOT_DIR, 'dist'),
+    android: path.join(ROOT_DIR, 'android'),
+    backup: path.join(ROOT_DIR, '.yeti_backups'),
+    updates: path.join(ROOT_DIR, 'updates'),
+  },
+  commands: {
+    build: 'npm run build',
+    capSync: 'npx cap sync android',
+    firebaseDeploy: 'firebase deploy',
+    gitAdd: 'git add .',
+    gitCommit: (version, desc) => `git commit -m "Update ${version} - ${desc}"`,
+    gitPush: 'git push origin main',
+  }
 };
+
+module.exports = CoreConfig;

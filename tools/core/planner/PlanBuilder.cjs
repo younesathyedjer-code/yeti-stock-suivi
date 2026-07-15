@@ -1,121 +1,22 @@
-const UpdatePlan =
-    require("../models/UpdatePlan.cjs");
+const fs = require('fs');
+const CoreConfig = require('../config/CoreConfig.cjs');
+const UpdatePlan = require('../models/UpdatePlan.cjs');
 
-
-class PlanBuilder{
-
-
-    constructor(
-        manifest,
-        files={}
-    ){
-
-        this.manifest = manifest;
-
-        this.files = files;
-
+class PlanBuilder {
+  static build() {
+    const manifestPath = CoreConfig.paths.manifest;
+    if (!fs.existsSync(manifestPath)) {
+      throw new Error(`Le fichier manifest.json est introuvable à : ${manifestPath}`);
     }
 
-
-
-
-    build(){
-
-
-        const plan =
-            new UpdatePlan();
-
-
-
-
-        plan.version =
-            this.manifest.version ?? "";
-
-
-        plan.description =
-            this.manifest.description ?? "";
-
-
-        plan.author =
-            this.manifest.author ?? "";
-
-
-
-
-        plan.build =
-            Boolean(
-                this.manifest.build
-            );
-
-
-        plan.capacitorSync =
-            Boolean(
-                this.manifest.capacitorSync
-            );
-
-
-        plan.apkBuild =
-            Boolean(
-                this.manifest.apkBuild
-            );
-
-
-        plan.firebaseDeploy =
-            Boolean(
-                this.manifest.firebaseDeploy
-            );
-
-
-        plan.gitCommit =
-            Boolean(
-                this.manifest.gitCommit
-            );
-
-
-
-
-        for(const file of this.files.added||[]){
-
-            plan.addCopy(
-                file,
-                file
-            );
-
-        }
-
-
-
-
-        for(const file of this.files.modified||[]){
-
-            plan.addCopy(
-                file,
-                file
-            );
-
-        }
-
-
-
-
-        for(const file of this.files.deleted||[]){
-
-            plan.addDelete(
-                file
-            );
-
-        }
-
-
-
-
-        return plan;
-
-
+    try {
+      const rawData = fs.readFileSync(manifestPath, 'utf8');
+      const manifest = JSON.parse(rawData);
+      return new UpdatePlan(manifest);
+    } catch (err) {
+      throw new Error(`Échec de lecture ou d'analyse du manifest.json : ${err.message}`);
     }
-
-
+  }
 }
-
 
 module.exports = PlanBuilder;

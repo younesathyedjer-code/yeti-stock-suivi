@@ -1,125 +1,44 @@
-const { execSync } = require("child_process");
-
+const { execSync } = require('child_process');
+const CoreConfig = require('../config/CoreConfig.cjs');
 
 class GitManager {
-
-
-    constructor(config) {
-
-        this.config = config;
-
+  static checkStatus() {
+    try {
+      const status = execSync('git status --porcelain', { cwd: CoreConfig.paths.root }).toString().trim();
+      return status;
+    } catch (err) {
+      console.error("Erreur git status :", err.message);
+      return '';
     }
+  }
 
+  static commitAndPush(version, description) {
+    console.log("Début de l'intégration Git...");
+    try {
+      // Check if there are changes to commit
+      const status = this.checkStatus();
+      if (!status) {
+        console.log("Aucune modification à commiter dans Git.");
+        return true;
+      }
 
+      console.log("Ajout des modifications...");
+      execSync(CoreConfig.commands.gitAdd, { cwd: CoreConfig.paths.root, stdio: 'inherit' });
 
-    execute(plan) {
+      const commitMsg = CoreConfig.commands.gitCommit(version, description);
+      console.log(`Création du commit : "${commitMsg}"...`);
+      execSync(commitMsg, { cwd: CoreConfig.paths.root, stdio: 'inherit' });
 
+      console.log("Envoi sur la branche main (git push)...");
+      execSync(CoreConfig.commands.gitPush, { cwd: CoreConfig.paths.root, stdio: 'inherit' });
 
-        if (!plan.gitCommit) {
-
-            console.log(
-                "Git ignoré."
-            );
-
-            return true;
-
-        }
-
-
-
-        try {
-
-
-            execSync(
-                "git add .",
-                {
-                    cwd: this.config.projectRoot,
-                    stdio: "inherit"
-                }
-            );
-
-
-
-            const status =
-                execSync(
-                    "git status --porcelain",
-                    {
-                        cwd: this.config.projectRoot,
-                        encoding: "utf8"
-                    }
-                );
-
-
-
-            if (!status.trim()) {
-
-
-                console.log(
-                    "Aucun changement Git détecté."
-                );
-
-
-                return true;
-
-
-            }
-
-
-
-            execSync(
-                `git commit -m "Update ${plan.version}"`,
-                {
-                    cwd: this.config.projectRoot,
-                    stdio: "inherit"
-                }
-            );
-
-
-
-            if (this.config.gitBranch) {
-
-
-                execSync(
-                    `git push origin ${this.config.gitBranch}`,
-                    {
-                        cwd: this.config.projectRoot,
-                        stdio: "inherit"
-                    }
-                );
-
-
-            }
-
-
-
-            console.log(
-                "Git : OK"
-            );
-
-
-            return true;
-
-
-
-        }
-        catch(error) {
-
-
-            console.log(
-                "Erreur Git : " + error.message
-            );
-
-
-            throw error;
-
-
-        }
-
-
+      console.log("✓ Synchronisation Git réussie !");
+      return true;
+    } catch (err) {
+      console.error("❌ Échec de la synchronisation Git :", err.message);
+      throw err;
     }
-
-
+  }
 }
-
 
 module.exports = GitManager;

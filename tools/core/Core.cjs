@@ -1,122 +1,53 @@
-const path = require("path");
-
-
-const load = p =>
-    require(
-        path.join(
-            __dirname,
-            p
-        )
-    );
-
-
-
-module.exports = {
-
-
-    Logger:
-        load("utils/Logger.cjs"),
-
-
-
-    Helpers:
-        load("utils/Helpers.cjs"),
-
-
-
-    PackageLoader:
-        load("package/PackageLoader.cjs"),
-
-
-
-    ManifestReader:
-        load("package/ManifestReader.cjs"),
-
-
-
-    PackageAnalyzer:
-        load("package/PackageAnalyzer.cjs"),
-
-
-
-    PlanBuilder:
-        load("planner/PlanBuilder.cjs"),
-
-
-
-    PlanValidator:
-        load("planner/PlanValidator.cjs"),
-
-
-
-    DiffBuilder:
-        load("planner/DiffBuilder.cjs"),
-
-
-
-    FileManager:
-        load("filesystem/FileManager.cjs"),
-
-
-
-    BackupManager:
-        load("filesystem/BackupManager.cjs"),
-
-
-
-    RestoreManager:
-        load("filesystem/RestoreManager.cjs"),
-
-
-
-    TransactionManager:
-        load("filesystem/TransactionManager.cjs"),
-
-
-
-    SecurityManager:
-        load("filesystem/SecurityManager.cjs"),
-
-
-
-    BuildManager:
-        load("services/BuildManager.cjs"),
-
-
-
-    ApkManager:
-        load("services/ApkManager.cjs"),
-
-
-
-    GitManager:
-        load("services/GitManager.cjs"),
-
-
-
-    ConsoleUI:
-        load("ui/ConsoleUI.cjs"),
-
-
-
-    UpdateReport:
-        load("ui/UpdateReport.cjs"),
-
-
-
-    ReleaseManager:
-        load("ReleaseManager.cjs"),
-
-
-
-    ReleaseReport:
-        load("ui/ReleaseReport.cjs"),
-
-
-
-    RestoreEngine:
-        load("RestoreEngine.cjs")
-
-
-
-};
+const PlanBuilder = require('./planner/PlanBuilder.cjs');
+const UpdateEngine = require('./UpdateEngine.cjs');
+const ReleaseManager = require('./ReleaseManager.cjs');
+
+class Core {
+  static async run() {
+    console.log("================================================================================");
+    console.log("===================== INITIALISATION YETI UPDATE MANAGER v5 ====================");
+    console.log("================================================================================");
+
+    const engine = new UpdateEngine();
+    
+    try {
+      // 0. Extraction de la mise à jour ZIP si présente
+      console.log("Phase 0 : Recherche et extraction de mise à jour (.zip)...");
+      engine.extractLatestZipIfExists();
+
+      // 1. Lire le manifest et élaborer le plan
+      console.log("\nPhase 1 : Lecture du manifest...");
+      const plan = PlanBuilder.build();
+      console.log(plan.summary());
+
+      // 2. Lancer la sauvegarde de sécurité (sera ignorée si déjà effectuée lors de l'extraction ZIP)
+      console.log("\nPhase 2 : Sauvegarde de sécurité...");
+      engine.backup();
+
+      // 3. Exécuter la transaction d'Update et de Release
+      console.log("\nPhase 3 : Exécution de l'orchestration des tâches...");
+      await ReleaseManager.execute(plan);
+
+      console.log("\n================================================================================");
+      console.log("========================= UPDATE TERMINÉ AVEC SUCCÈS ==========================");
+      console.log("================================================================================");
+
+    } catch (error) {
+      console.error("\n❌ ERREUR CRITIQUE DURANT L'UPDATE :", error.message);
+      
+      // Rollback de sécurité en cas d'erreur de transaction
+      try {
+        engine.rollback();
+      } catch (rollbackErr) {
+        console.error("Échec lors du rollback de sécurité :", rollbackErr.message);
+      }
+      
+      console.log("\n================================================================================");
+      console.log("=========================== ÉCHEC DE L'UPDATE (ANNULÉ) =========================");
+      console.log("================================================================================");
+      process.exit(1);
+    }
+  }
+}
+
+module.exports = Core;

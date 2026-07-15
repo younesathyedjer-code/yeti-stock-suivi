@@ -1,200 +1,42 @@
-const { execSync } = require("child_process");
-const path = require("path");
-
+const { execSync } = require('child_process');
+const CoreConfig = require('../config/CoreConfig.cjs');
 
 class BuildManager {
-
-
-    constructor(config){
-
-        this.config = config;
-
+  static runWebBuild() {
+    console.log("Exécution du build web demandé...");
+    try {
+      execSync(CoreConfig.commands.build, { cwd: CoreConfig.paths.root, stdio: 'inherit' });
+      console.log("✓ Build web complété avec succès !");
+      return true;
+    } catch (err) {
+      console.error("❌ Échec du build web :", err.message);
+      throw err;
     }
+  }
 
-
-
-    run(command, cwd = this.config.projectRoot){
-
-
-        console.log("\n> " + command);
-
-
-        execSync(
-
-            command,
-
-            {
-
-                cwd,
-
-                stdio:"inherit"
-
-            }
-
-        );
-
-
+  static runCapacitorSync() {
+    console.log("Exécution du Capacitor Sync demandé...");
+    try {
+      execSync(CoreConfig.commands.capSync, { cwd: CoreConfig.paths.root, stdio: 'inherit' });
+      console.log("✓ Capacitor Sync complété avec succès !");
+      return true;
+    } catch (err) {
+      console.error("❌ Échec du Capacitor Sync :", err.message);
+      throw err;
     }
-
-
-
-
-
-    execute(plan){
-
-
-        console.log("\nBUILD MANAGER");
-
-
-
-        if(plan.build){
-
-
-            console.log(
-                "Build web demandé."
-            );
-
-
-            this.run(
-                "npm run build"
-            );
-
-
-        }
-
-        else{
-
-
-            console.log(
-                "Build web ignoré."
-            );
-
-
-        }
-
-
-
-
-
-        if(plan.capacitorSync){
-
-
-            console.log(
-                "Synchronisation Capacitor demandée."
-            );
-
-
-            this.run(
-                "npx cap sync android"
-            );
-
-
-        }
-
-        else{
-
-
-            console.log(
-                "Capacitor sync ignoré."
-            );
-
-
-        }
-
-
-
-
-
-        if(plan.apkBuild){
-
-
-            console.log(
-                "Construction APK Release demandée."
-            );
-
-
-            const androidPath =
-                path.join(
-
-                    this.config.projectRoot,
-
-                    "android"
-
-                );
-
-
-
-            if(process.platform === "win32"){
-
-
-                this.run(
-
-                    "gradlew.bat assembleRelease",
-
-                    androidPath
-
-                );
-
-
-            }
-
-            else{
-
-
-                this.run(
-
-                    "./gradlew assembleRelease",
-
-                    androidPath
-
-                );
-
-
-            }
-
-
-
-            console.log(
-                "APK Release générée."
-            );
-
-
-        }
-
-        else{
-
-
-            console.log(
-                "APK Release ignorée."
-            );
-
-
-        }
-
-
-
-
-        if(plan.firebaseDeploy){
-
-
-            console.log(
-                "Firebase Deploy demandé."
-            );
-
-
-        }
-
-
-
-        console.log(
-            "\nBUILD MANAGER terminé."
-        );
-
-
+  }
+
+  static runFirebaseDeploy() {
+    console.log("Exécution du Firebase Deploy demandé...");
+    try {
+      execSync(CoreConfig.commands.firebaseDeploy, { cwd: CoreConfig.paths.root, stdio: 'inherit' });
+      console.log("✓ Firebase Deploy complété avec succès !");
+      return true;
+    } catch (err) {
+      console.error("❌ Échec du Firebase Deploy :", err.message);
+      throw err;
     }
-
-
+  }
 }
-
 
 module.exports = BuildManager;
