@@ -15,6 +15,15 @@ class GitManager {
   static commitAndPush(version, description) {
     console.log("Début de l'intégration Git...");
     try {
+      // 1. Désindexer préventivement les dossiers locaux qui ne doivent jamais être suivis par Git
+      console.log("Nettoyage de l'index Git pour s'assurer que les sauvegardes restent locales...");
+      try {
+        execSync('git rm -r --cached .yeti_backups --ignore-unmatch', { cwd: CoreConfig.paths.root, stdio: 'ignore' });
+        execSync('git rm -r --cached updates/processed --ignore-unmatch', { cwd: CoreConfig.paths.root, stdio: 'ignore' });
+      } catch (rmErr) {
+        // Ignorer les erreurs si les fichiers ne sont pas indexés
+      }
+
       // Check if there are changes to commit
       const status = this.checkStatus();
       if (!status) {
