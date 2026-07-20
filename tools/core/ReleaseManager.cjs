@@ -3,7 +3,7 @@ const ApkManager = require('./services/ApkManager.cjs');
 const GitManager = require('./services/GitManager.cjs');
 
 class ReleaseManager {
-  static async execute(plan, extractionReport = null) {
+  static async execute(plan, extractionReport = null, backupPath = null) {
     console.log("================================ Release Manager ================================");
     
     // ==========================================
@@ -93,7 +93,7 @@ class ReleaseManager {
     let gitSuccess = false;
     if (plan.gitCommit) {
       try {
-        GitManager.commitAndPush(plan.version, plan.description);
+        GitManager.commitAndPush(plan.version, plan.description, backupPath);
         gitSuccess = true;
       } catch (err) {
         gitWarning = err.message;

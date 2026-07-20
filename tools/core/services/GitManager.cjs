@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const { execSync } = require('child_process');
 const CoreConfig = require('../config/CoreConfig.cjs');
 
@@ -42,7 +44,7 @@ class GitManager {
     return statusInfo.lines.join('\n');
   }
 
-  static commitAndPush(version, description) {
+  static commitAndPush(version, description, backupPath = null) {
     console.log("Début de l'intégration Git...");
     try {
       // 1. Désindexer préventivement les dossiers locaux qui ne doivent jamais être suivis par Git
@@ -57,11 +59,70 @@ class GitManager {
       // Check if there are changes to commit
       const statusInfo = this.getStatusInfo();
       
-      console.log("\n--- [CONTRÔLE STATUT GIT] ---");
-      console.log(`- ${statusInfo.modified} fichiers modifiés`);
-      console.log(`- ${statusInfo.added} nouveaux fichiers`);
-      console.log(`- ${statusInfo.deleted} fichiers supprimés`);
+      // Récupérer les dépendances modifiées
+      let modifiedDeps = [];
+      if (backupPath && fs.existsSync(backupPath)) {
+        const backupPkgPath = path.join(backupPath, 'package.json');
+        const currentPkgPath = path.join(CoreConfig.paths.root, 'package.json');
+        if (fs.existsSync(backupPkgPath) && fs.existsSync(currentPkgPath)) {
+          try {
+            const oldPkg = JSON.parse(fs.readFileSync(backupPkgPath, 'utf8'));
+            const newPkg = JSON.parse(fs.readFileSync(currentPkgPath, 'utf8'));
+            
+            const oldDeps = { ...(oldPkg.dependencies || {}), ...(oldPkg.devDependencies || {}) };
+            const newDeps = { ...(newPkg.dependencies || {}), ...(newPkg.devDependencies || {}) };
+            
+            Object.keys(newDeps).forEach(dep => {
+              if (!oldDeps[dep]) {
+                modifiedDeps.push(`+ ${dep} (${newDeps[dep]})`);
+              } else if (oldDeps[dep] !== newDeps[dep]) {
+                modifiedDeps.push(`~ ${dep} (${oldDeps[dep]} -> ${newDeps[dep]})`);
+              }
+            });
+            Object.keys(oldDeps).forEach(dep => {
+              if (!newDeps[dep]) {
+                modifiedDeps.push(`- ${dep} (supprimé)`);
+              }
+            });
+          } catch (err) {
+            // Ignorer l'erreur silencieusement
+          }
+        }
+      }
+
+      console.log("\n=== RÉSUMÉ DES MODIFICATIONS ===");
+      console.log(`Fichiers modifiés : ${statusInfo.modified}`);
+      console.log(`Nouveaux fichiers : ${statusInfo.added}`);
+      console.log(`Fichiers supprimés : ${statusInfo.deleted}`);
+      if (modifiedDeps.length > 0) {
+        console.log("Dépendances modifiées :");
+        modifiedDeps.forEach(dep => console.log(`   ${dep}`));
+      } else {
+        console.log("Dépendances modifiées : Aucune");
+      }
+      console.log("===============================\n");
+
+      // Validation de sécurité absolue : si des fichiers critiques ont disparu, on bloque le commit !
+      const criticalFiles = [
+        'package.json',
+        'manifest.json',
+        'vite.config.ts',
+        'src/App.tsx'
+      ];
       
+      let missingCritical = [];
+      criticalFiles.forEach(file => {
+        if (!fs.existsSync(path.join(CoreConfig.paths.root, file))) {
+          missingCritical.push(file);
+        }
+      });
+
+      if (missingCritical.length > 0) {
+        console.error("❌ ERREUR DE SÉCURITÉ GIT : Des fichiers critiques indispensables ont disparu !");
+        missingCritical.forEach(file => console.error(`  - Fichier manquant : ${file}`));
+        throw new Error(`Commit bloqué : Fichiers critiques manquants : ${missingCritical.join(', ')}`);
+      }
+
       if (!statusInfo.hasChanges) {
         console.log("Aucune modification à commiter dans Git.");
         return true;

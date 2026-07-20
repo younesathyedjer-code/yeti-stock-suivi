@@ -24,9 +24,16 @@ class Core {
       console.log("\nPhase 2 : Sauvegarde de sécurité...");
       engine.backup();
 
+      // 2.5 Validation du Projet
+      console.log("\nPhase 2.5 : Validation du Projet...");
+      const isValid = engine.validateProject();
+      if (!isValid) {
+        throw new Error("La validation de cohérence et de sécurité du projet a échoué (dépendances manquantes ou imports invalides).");
+      }
+
       // 3. Exécuter la transaction d'Update et de Release
       console.log("\nPhase 3 : Exécution de l'orchestration des tâches...");
-      await ReleaseManager.execute(plan, engine.extractionReport);
+      await ReleaseManager.execute(plan, engine.extractionReport, engine.backupPath);
 
       console.log("\n================================================================================");
       console.log("========================= UPDATE TERMINÉ AVEC SUCCÈS ==========================");

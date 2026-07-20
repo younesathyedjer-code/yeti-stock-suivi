@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Yeti Update Manager
+.yeti_backups/
+updates/*
+!updates/.gitkeep

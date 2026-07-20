@@ -87,14 +87,14 @@ class UpdateEngine {
         throw new Error("Le package ZIP ne contient pas de dossier 'src' valide à sa racine.");
       }
 
-      // Calculer les différences pour le dossier src/ avant de le remplacer !
+      // Calculer les différences pour le dossier src/ avant d'appliquer le patch !
       const localSrc = CoreConfig.paths.src;
       const currentFiles = this._getAllFilesRelative(localSrc);
       const newFiles = this._getAllFilesRelative(srcSource);
       
       const replaced = [];
       const added = [];
-      const deleted = [];
+      const preserved = [];
       
       newFiles.forEach(f => {
         if (currentFiles.includes(f)) {
@@ -106,11 +106,11 @@ class UpdateEngine {
       
       currentFiles.forEach(f => {
         if (!newFiles.includes(f)) {
-          deleted.push(f);
+          preserved.push(f);
         }
       });
 
-      console.log("Application de la nouvelle mise à jour...");
+      console.log("Application de la mise à jour sous forme de patch (fusion)...");
 
       // Parcourir tous les éléments à la racine de l'archive (tempSourceDir)
       const items = fs.readdirSync(tempSourceDir);
@@ -125,14 +125,18 @@ class UpdateEngine {
         const destItemPath = path.join(CoreConfig.paths.root, itemName);
 
         if (fs.existsSync(destItemPath)) {
-          // Si c'est un dossier, on le supprime d'abord récursivement, puis on copie le nouveau
           if (fs.statSync(destItemPath).isDirectory()) {
-            this._rmDirRecursive(destItemPath);
-            this._copyDirRecursive(sourceItemPath, destItemPath);
+            // Fusionner récursivement au lieu de tout supprimer !
+            this._mergeDirRecursive(sourceItemPath, destItemPath);
           } else {
-            // C'est un fichier, on l'écrase
-            fs.copyFileSync(sourceItemPath, destItemPath);
-            rootReplacedCount++;
+            if (itemName === 'package.json') {
+              // Fusionner de façon intelligente package.json sans casser les dépendances critiques
+              this._mergePackageJson(destItemPath, sourceItemPath);
+            } else {
+              // C'est un fichier, on l'écrase
+              fs.copyFileSync(sourceItemPath, destItemPath);
+              rootReplacedCount++;
+            }
           }
         } else {
           // Nouveau fichier ou dossier
@@ -149,7 +153,7 @@ class UpdateEngine {
         throw new Error("Vérification post-extraction échouée : les fichiers critiques (src/App.tsx ou manifest.json) sont absents.");
       }
 
-      console.log("✓ Remplacement des fichiers terminé avec succès.");
+      console.log("✓ Application du patch terminée avec succès.");
 
       // Stocker les détails du rapport d'extraction
       this.extractionReport = {
@@ -157,23 +161,26 @@ class UpdateEngine {
         extracted: true,
         replacedCount: replaced.length,
         addedCount: added.length,
-        deletedCount: deleted.length,
+        deletedCount: 0, // Nous ne supprimons plus aucun fichier !
         rootReplacedCount
       };
 
-      // Afficher le rapport d'extraction
+      // Afficher le rapport d'extraction de type Patch
       console.log("\n================================================================================");
-      console.log("=================== RAPPORT D'EXTRACTION ET REMPLACEMENT =======================");
+      console.log("=================== RAPPORT D'APPLICATION DU PATCH YETI ========================");
       console.log("================================================================================");
-      console.log(`- Fichiers de code (/src) remplacés   : ${replaced.length}`);
-      console.log(`- Nouveaux fichiers (/src) ajoutés     : ${added.length}`);
-      console.log(`- Fichiers (/src) supprimés            : ${deleted.length}`);
-      if (deleted.length > 0) {
-        console.log("Fichiers supprimés :");
-        deleted.forEach(f => console.log(`   - src/${f}`));
+      console.log(`- Fichiers de code (/src) mis à jour/remplacés : ${replaced.length}`);
+      console.log(`- Nouveaux fichiers (/src) ajoutés             : ${added.length}`);
+      console.log(`- Fichiers (/src) existants préservés          : ${preserved.length}`);
+      if (preserved.length > 0) {
+        console.log("Fichiers d'origine conservés intacts (absents de la mise à jour) :");
+        preserved.slice(0, 15).forEach(f => console.log(`   - src/${f}`));
+        if (preserved.length > 15) {
+          console.log(`   ... et ${preserved.length - 15} autres fichiers conservés.`);
+        }
       }
       if (rootReplacedCount > 0) {
-        console.log(`- Fichiers de configuration racine écrasés : ${rootReplacedCount}`);
+        console.log(`- Fichiers de configuration racine écrasés      : ${rootReplacedCount}`);
       }
       console.log("================================================================================\n");
 
@@ -313,6 +320,275 @@ class UpdateEngine {
       });
     } else {
       fs.copyFileSync(src, dest);
+    }
+  }
+
+  _mergeDirRecursive(src, dest) {
+    if (!fs.existsSync(dest)) {
+      fs.mkdirSync(dest, { recursive: true });
+    }
+    const items = fs.readdirSync(src);
+    items.forEach(item => {
+      const srcPath = path.join(src, item);
+      const destPath = path.join(dest, item);
+      if (fs.statSync(srcPath).isDirectory()) {
+        this._mergeDirRecursive(srcPath, destPath);
+      } else {
+        fs.copyFileSync(srcPath, destPath);
+      }
+    });
+  }
+
+  _mergePackageJson(currentPath, newPath) {
+    if (!fs.existsSync(currentPath)) {
+      fs.copyFileSync(newPath, currentPath);
+      return;
+    }
+    try {
+      const currentPkg = JSON.parse(fs.readFileSync(currentPath, 'utf8'));
+      const newPkg = JSON.parse(fs.readFileSync(newPath, 'utf8'));
+
+      // Fusionner les scripts de façon non destructive
+      const mergedScripts = { ...(currentPkg.scripts || {}), ...(newPkg.scripts || {}) };
+
+      // Fusionner les dépendances en préservant tout ce qui existe
+      const currentDeps = currentPkg.dependencies || {};
+      const newDeps = newPkg.dependencies || {};
+      const mergedDeps = { ...currentDeps, ...newDeps };
+
+      // Sécurité : S'assurer de conserver les packages critiques existants
+      const criticalPackages = [
+        'react', 'react-dom', 'vite', 'firebase', 
+        '@capacitor/core', '@capacitor/cli', '@capacitor/android'
+      ];
+      criticalPackages.forEach(pkg => {
+        if (currentDeps[pkg] && !mergedDeps[pkg]) {
+          mergedDeps[pkg] = currentDeps[pkg];
+        }
+      });
+
+      // Fusionner les devDependencies
+      const currentDevDeps = currentPkg.devDependencies || {};
+      const newDevDeps = newPkg.devDependencies || {};
+      const mergedDevDeps = { ...currentDevDeps, ...newDevDeps };
+      criticalPackages.forEach(pkg => {
+        if (currentDevDeps[pkg] && !mergedDevDeps[pkg]) {
+          mergedDevDeps[pkg] = currentDevDeps[pkg];
+        }
+      });
+
+      const mergedPkg = {
+        ...currentPkg,
+        ...newPkg,
+        scripts: mergedScripts,
+        dependencies: mergedDeps,
+        devDependencies: mergedDevDeps
+      };
+
+      fs.writeFileSync(currentPath, JSON.stringify(mergedPkg, null, 2), 'utf8');
+      console.log("✓ package.json fusionné avec succès (dépendances préservées) !");
+    } catch (err) {
+      console.warn("⚠️ Impossible de fusionner package.json de façon intelligente, écrasement par défaut :", err.message);
+      fs.copyFileSync(newPath, currentPath);
+    }
+  }
+
+  validateProject() {
+    const rootDir = CoreConfig.paths.root;
+    const pkgPath = path.join(rootDir, 'package.json');
+    const srcDir = CoreConfig.paths.src;
+
+    const performValidation = () => {
+      let isPackageJsonValid = false;
+      let pkg = null;
+      try {
+        if (fs.existsSync(pkgPath)) {
+          pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+          isPackageJsonValid = true;
+        }
+      } catch (err) {}
+
+      if (!isPackageJsonValid) {
+        return { success: false, reason: "package_json_invalid", details: "package.json manquant ou malformé" };
+      }
+
+      const allDeps = {
+        ...(pkg.dependencies || {}),
+        ...(pkg.devDependencies || {})
+      };
+
+      // Définir les packages importants et critiques
+      const baseCritical = ['react', 'react-dom', 'vite'];
+      const optionalCritical = ['firebase', '@capacitor/core'];
+      const criticalToCheck = [...baseCritical];
+
+      optionalCritical.forEach(pkgName => {
+        if (allDeps[pkgName]) {
+          criticalToCheck.push(pkgName);
+        }
+      });
+
+      // 1 & 2. Vérifier chaque package critique / important
+      const criticalStatus = [];
+      let allCriticalOk = true;
+
+      criticalToCheck.forEach(pkgName => {
+        let physicalExists = false;
+        
+        // Vérification physique du dossier dans node_modules
+        const pkgDir = path.join(rootDir, 'node_modules', pkgName);
+        if (fs.existsSync(pkgDir) && fs.statSync(pkgDir).isDirectory()) {
+          physicalExists = true;
+        } else {
+          // Fallback par require.resolve
+          try {
+            require.resolve(pkgName, { paths: [rootDir] });
+            physicalExists = true;
+          } catch (e) {}
+        }
+
+        if (physicalExists) {
+          criticalStatus.push({ name: pkgName, ok: true, msg: `✔ ${pkgName} disponible dans node_modules` });
+        } else {
+          allCriticalOk = false;
+          criticalStatus.push({ name: pkgName, ok: false, msg: `❌ ${pkgName} absent ou corrompu dans node_modules` });
+        }
+      });
+
+      // 3. Scanner les imports et tester leur résolvabilité physique réelle
+      if (!fs.existsSync(srcDir)) {
+        return { success: false, reason: "src_missing", details: "Dossier src/ manquant" };
+      }
+
+      const tsFiles = this._getAllFilesRelative(srcDir).filter(f => f.endsWith('.ts') || f.endsWith('.tsx'));
+      const importIssues = [];
+
+      const ignorePackages = new Set([
+        'path', 'fs', 'child_process', 'crypto', 'os', 'http', 'https', 'url', 'querystring', 'util', 'stream', 'zlib', 'events'
+      ]);
+
+      tsFiles.forEach(file => {
+        const filePath = path.join(srcDir, file);
+        try {
+          const content = fs.readFileSync(filePath, 'utf8');
+          
+          // Regex robuste pour intercepter les imports classiques, multiples et side-effects
+          const importRegex = /import\s+(?:[\s\S]*?from\s+)?['"]([^'"]+)['"]/g;
+          let match;
+          while ((match = importRegex.exec(content)) !== null) {
+            const importPath = match[1];
+            if (importPath.startsWith('.')) continue;
+            if (importPath.startsWith('/')) continue;
+
+            let pkgName = importPath;
+            if (importPath.startsWith('@')) {
+              const parts = importPath.split('/');
+              pkgName = parts.slice(0, 2).join('/');
+            } else {
+              pkgName = importPath.split('/')[0];
+            }
+
+            if (ignorePackages.has(pkgName)) continue;
+
+            // Vérifier si déclaré dans package.json
+            const isDeclared = !!allDeps[pkgName];
+            
+            // Vérification physique de l'import exact
+            let isPhysicalInstalled = false;
+            const pkgDir = path.join(rootDir, 'node_modules', pkgName);
+            if (fs.existsSync(pkgDir) && fs.statSync(pkgDir).isDirectory()) {
+              isPhysicalInstalled = true;
+            } else {
+              try {
+                require.resolve(importPath, { paths: [rootDir] });
+                isPhysicalInstalled = true;
+              } catch (e) {
+                try {
+                  require.resolve(pkgName, { paths: [rootDir] });
+                  isPhysicalInstalled = true;
+                } catch (e2) {}
+              }
+            }
+
+            if (!isDeclared || !isPhysicalInstalled) {
+              importIssues.push({
+                importPath,
+                pkgName,
+                file: `src/${file}`,
+                isDeclared,
+                isPhysicalInstalled
+              });
+            }
+          }
+        } catch (err) {
+          // Ignorer silencieusement les erreurs de lecture
+        }
+      });
+
+      const success = allCriticalOk && (importIssues.length === 0);
+
+      return {
+        success,
+        criticalStatus,
+        importIssues
+      };
+    };
+
+    console.log("\n=== VALIDATION DU PROJET ===");
+    let res = performValidation();
+
+    // Si échec du premier coup, on tente une restauration/installation automatique
+    if (!res.success) {
+      console.log("\nℹ Dépendance(s) manquante(s) ou non installée(s) physiquement dans node_modules.");
+      console.log("Exécution automatique de 'npm install' pour rétablir les modules...");
+      try {
+        execSync('npm install', { cwd: rootDir, stdio: 'inherit' });
+        console.log("✓ npm install exécuté avec succès. Seconde validation du projet...\n");
+        res = performValidation();
+      } catch (err) {
+        console.error("❌ Impossible de restaurer les dépendances automatiquement via npm install :", err.message);
+      }
+    }
+
+    // Affichage des logs finaux
+    console.log("\n=== RÉSULTAT DE LA VALIDATION ===");
+    console.log("✔ package.json valide");
+    
+    if (res.criticalStatus) {
+      res.criticalStatus.forEach(status => {
+        console.log(status.msg);
+      });
+    }
+
+    if (res.success) {
+      console.log("✔ Tous les imports du code source correspondent à des dépendances déclarées et installées");
+      console.log("=============================\n");
+      return true;
+    } else {
+      console.error("❌ ERREUR DE VALIDATION : Le projet présente des anomalies critiques.");
+      
+      if (res.importIssues && res.importIssues.length > 0) {
+        const firstIssue = res.importIssues[0];
+        console.error("\n=============================");
+        console.error("🚨 UPDATE ANNULÉ !");
+        console.error(`\nDépendance manquante :\n${firstIssue.importPath}`);
+        console.error(`\nFichier concerné :\n${firstIssue.file}`);
+        if (!firstIssue.isDeclared) {
+          console.error(`\n(La dépendance "${firstIssue.pkgName}" n'est pas déclarée dans package.json)`);
+        } else if (!firstIssue.isPhysicalInstalled) {
+          console.error(`\n(La dépendance "${firstIssue.pkgName}" est déclarée dans package.json mais absente physiquement de node_modules)`);
+        }
+        console.error("=============================");
+      } else {
+        console.error("\n=============================");
+        console.error("🚨 UPDATE ANNULÉ : Des dépendances critiques (React, Vite, etc.) sont absentes de node_modules.");
+        console.error("=============================");
+      }
+      
+      console.error("\nAucun build lancé.");
+      console.error("Aucun commit Git effectué.");
+      console.log("=============================\n");
+      return false;
     }
   }
 
