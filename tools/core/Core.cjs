@@ -26,7 +26,7 @@ class Core {
 
       // 3. Exécuter la transaction d'Update et de Release
       console.log("\nPhase 3 : Exécution de l'orchestration des tâches...");
-      await ReleaseManager.execute(plan);
+      await ReleaseManager.execute(plan, engine.extractionReport);
 
       console.log("\n================================================================================");
       console.log("========================= UPDATE TERMINÉ AVEC SUCCÈS ==========================");

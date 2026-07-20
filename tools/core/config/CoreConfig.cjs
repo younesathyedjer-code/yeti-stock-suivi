@@ -16,7 +16,7 @@ const CoreConfig = {
     build: 'npm run build',
     capSync: 'npx cap sync android',
     firebaseDeploy: 'firebase deploy',
-    gitAdd: 'git add .',
+    gitAdd: 'git add src/ manifest.json .gitignore',
     gitCommit: (version, desc) => `git commit -m "Update ${version} - ${desc}"`,
     gitPush: 'git push origin main',
   }

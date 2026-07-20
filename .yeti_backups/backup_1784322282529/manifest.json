@@ -1,0 +1,9 @@
+{
+  "version": "test-1.0",
+  "description": "Test automatique Yeti Update Manager",
+  "build": true,
+  "capacitorSync": true,
+  "apkRelease": true,
+  "firebaseDeploy": true,
+  "gitCommit": true
+}
