@@ -179,9 +179,14 @@ export default function EspaceAdmin({
       .join(', ');
   };
 
-  const getPerfumeTotalQuantity = (gammeId: string, perfume: string, agentId: string) => {
+  const getPerfumeTotalQuantity = (gammeId: string, perfume: string, agentId: string, validationId?: string) => {
     return inventories
-      .filter(inv => inv.agentId === agentId && inv.gammeId === gammeId)
+      .filter(inv => {
+        const matchesSession = validationId 
+          ? (inv.validationId === validationId || (!inv.validationId && inv.id === validationId))
+          : (inv.agentId === agentId);
+        return matchesSession && inv.gammeId === gammeId;
+      })
       .reduce((sum, inv) => {
         const entry = inv.entries.find(e => e.perfume === perfume);
         return sum + (entry ? entry.quantity : 0);
@@ -210,11 +215,14 @@ export default function EspaceAdmin({
   };
 
   // Paginate gammes for printing/previews with dynamic height estimation for A4 boundaries
-  const getFormattedPrintPagesForAgent = (agentId: string) => {
+  const getFormattedPrintPagesForAgent = (agentId: string, validationId?: string) => {
     const activeGammes = gammes.filter(g => {
       return g.perfumes.some(perfume => {
         return inventories.some(inv => {
-          const isOwn = inv.agentId === agentId && inv.gammeId === g.id;
+          const matchesSession = validationId 
+            ? (inv.validationId === validationId || (!inv.validationId && inv.id === validationId))
+            : (inv.agentId === agentId);
+          const isOwn = matchesSession && inv.gammeId === g.id;
           if (!isOwn) return false;
           if (inv.type === 'mono') {
             return inv.entries.some(e => e.perfume === perfume);
@@ -257,7 +265,10 @@ export default function EspaceAdmin({
     const getLastActivePerfume = (g: typeof activeGammes[0]) => {
       const gPerfumes = g.perfumes.filter(p => {
         return inventories.some(inv => {
-          return inv.agentId === agentId && inv.gammeId === g.id && (inv.type === 'mono' ? inv.entries.some(e => e.perfume === p) : getDominantPerfumeForMixte(inv) === p);
+          const matchesSession = validationId 
+            ? (inv.validationId === validationId || (!inv.validationId && inv.id === validationId))
+            : (inv.agentId === agentId);
+          return matchesSession && inv.gammeId === g.id && (inv.type === 'mono' ? inv.entries.some(e => e.perfume === p) : getDominantPerfumeForMixte(inv) === p);
         });
       });
       return gPerfumes[gPerfumes.length - 1];
@@ -267,7 +278,10 @@ export default function EspaceAdmin({
     activeGammes.forEach(gamme => {
       const activePerfumes = gamme.perfumes.filter(perfume => {
         return inventories.some(inv => {
-          const isOwn = inv.agentId === agentId && inv.gammeId === gamme.id;
+          const matchesSession = validationId 
+            ? (inv.validationId === validationId || (!inv.validationId && inv.id === validationId))
+            : (inv.agentId === agentId);
+          const isOwn = matchesSession && inv.gammeId === gamme.id;
           if (!isOwn) return false;
           if (inv.type === 'mono') {
             return inv.entries.some(e => e.perfume === perfume);
@@ -282,7 +296,10 @@ export default function EspaceAdmin({
 
       activePerfumes.forEach(perfume => {
         const relevantItems = inventories.filter(inv => {
-          const isOwn = inv.agentId === agentId && inv.gammeId === gamme.id;
+          const matchesSession = validationId 
+            ? (inv.validationId === validationId || (!inv.validationId && inv.id === validationId))
+            : (inv.agentId === agentId);
+          const isOwn = matchesSession && inv.gammeId === gamme.id;
           if (!isOwn) return false;
           if (inv.type === 'mono') {
             return inv.entries.some(e => e.perfume === perfume);
@@ -344,7 +361,7 @@ export default function EspaceAdmin({
               items: palletsToPlace,
               isContinuation: !isFirstSegment,
               // Only display total aggregate count once all the perfume's pallets have completed
-              totalQuantity: isRemainingEmpty ? getPerfumeTotalQuantity(gamme.id, perfume, agentId) : undefined
+              totalQuantity: isRemainingEmpty ? getPerfumeTotalQuantity(gamme.id, perfume, agentId, validationId) : undefined
             });
 
             currentHeight += rowHeightSpent;
@@ -1187,7 +1204,7 @@ export default function EspaceAdmin({
                   {gammes.map(g => {
                     const hasCounts = g.perfumes.some(perfume => {
                       const relevantItems = inventories.filter(inv => {
-                        const isOwn = inv.agentId === selectedInvForView.agentId && inv.gammeId === g.id;
+                        const isOwn = (inv.validationId === selectedInvForView.id || (!inv.validationId && inv.id === selectedInvForView.id)) && inv.gammeId === g.id;
                         if (!isOwn) return false;
                         if (inv.type === 'mono') {
                           return inv.entries.some(e => e.perfume === perfume);
@@ -1211,7 +1228,7 @@ export default function EspaceAdmin({
                         <div className="divide-y divide-slate-100">
                           {g.perfumes.map(perfume => {
                             const relevantItems = inventories.filter(inv => {
-                              const isOwn = inv.agentId === selectedInvForView.agentId && inv.gammeId === g.id;
+                              const isOwn = (inv.validationId === selectedInvForView.id || (!inv.validationId && inv.id === selectedInvForView.id)) && inv.gammeId === g.id;
                               if (!isOwn) return false;
                               if (inv.type === 'mono') {
                                 return inv.entries.some(e => e.perfume === perfume);
@@ -1251,7 +1268,7 @@ export default function EspaceAdmin({
                                             })()}
                                           </>
                                         ) : (
-                                          <span className="w-8 h-8 rounded-full border-2 border-slate-850 bg-slate-50 text-slate-900 flex items-center justify-center font-extrabold text-xs shadow-2xs">
+                                          <span className="w-8 h-8 rounded-full border-2 border-slate-850 bg-slate-55 text-slate-900 flex items-center justify-center font-extrabold text-xs shadow-2xs">
                                             {count}
                                           </span>
                                         )}
@@ -1260,7 +1277,7 @@ export default function EspaceAdmin({
                                   })}
                                 </div>
                                 <div className="text-right font-mono text-xs font-bold text-slate-900 border-l border-slate-100 pl-3 min-w-[70px]">
-                                  Total : {getPerfumeTotalQuantity(g.id, perfume, selectedInvForView.agentId)} Carton
+                                  Total : {getPerfumeTotalQuantity(g.id, perfume, selectedInvForView.agentId, selectedInvForView.id)} Carton
                                 </div>
                               </div>
                             );
@@ -1301,9 +1318,9 @@ export default function EspaceAdmin({
       {selectedInvForPrint && createPortal(
         <div className="hidden print:block bg-white text-black p-0" id="print-single-inventory-area">
           {(() => {
-            const printedPages = getFormattedPrintPagesForAgent(selectedInvForPrint.agentId);
-            const totalActivePalettes = inventories.filter(inv => inv.agentId === selectedInvForPrint.agentId).length;
-            const grandTotalQty = inventories.filter(inv => inv.agentId === selectedInvForPrint.agentId).reduce((acc, item) => acc + item.entries.reduce((sum, e) => sum + e.quantity, 0), 0);
+            const printedPages = getFormattedPrintPagesForAgent(selectedInvForPrint.agentId, selectedInvForPrint.id);
+            const totalActivePalettes = inventories.filter(inv => inv.validationId === selectedInvForPrint.id || (!inv.validationId && inv.id === selectedInvForPrint.id)).length;
+            const grandTotalQty = inventories.filter(inv => inv.validationId === selectedInvForPrint.id || (!inv.validationId && inv.id === selectedInvForPrint.id)).reduce((acc, item) => acc + item.entries.reduce((sum, e) => sum + e.quantity, 0), 0);
 
             return printedPages.map((page, pageIdx) => (
               <div key={pageIdx} className="page-break-after p-0 w-full flex flex-col justify-start gap-6 bg-white text-slate-800 relative font-sans" style={{ pageBreakAfter: 'always' }}>

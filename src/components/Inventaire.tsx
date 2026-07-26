@@ -5,7 +5,6 @@
 
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Html5Qrcode } from 'html5-qrcode';
 import { Gamme, InventoryItem } from '../types';
 import { 
   ClipboardCheck, Sparkles, Folder, RefreshCw, Layers, Plus, 
@@ -156,9 +155,14 @@ export default function Inventaire({
       .join(', ');
   };
 
-  const getPerfumeTotalQuantity = (gammeId: string, perfume: string, agentId: string) => {
+  const getPerfumeTotalQuantity = (gammeId: string, perfume: string, agentId: string, validationId?: string) => {
     return inventories
-      .filter(inv => inv.agentId === agentId && inv.gammeId === gammeId)
+      .filter(inv => {
+        const matchesSession = validationId 
+          ? (inv.validationId === validationId || (!inv.validationId && inv.id === validationId))
+          : (inv.agentId === agentId);
+        return matchesSession && inv.gammeId === gammeId;
+      })
       .reduce((sum, inv) => {
         const entry = inv.entries.find(e => e.perfume === perfume);
         return sum + (entry ? entry.quantity : 0);
@@ -199,6 +203,19 @@ export default function Inventaire({
   // Manage custom entered quantities per product card
   const [monoCustomQuantities, setMonoCustomQuantities] = useState<Record<string, string>>({});
   const [pendingPrint, setPendingPrint] = useState<boolean>(false);
+  const [selectedSessionForPrint, setSelectedSessionForPrint] = useState<any | null>(null);
+
+  // Reliable print effect triggered after DOM rendering is complete
+  useEffect(() => {
+    if (selectedSessionForPrint) {
+      const timer = setTimeout(() => {
+        window.focus();
+        window.print();
+        setSelectedSessionForPrint(null);
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [selectedSessionForPrint]);
 
   // Session editing states
   const [editingSession, setEditingSession] = useState<any | null>(null);
@@ -206,7 +223,8 @@ export default function Inventaire({
   const [isUpdatingSession, setIsUpdatingSession] = useState<boolean>(false);
 
   // QR & Barcode scanner states
-  const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
+  const [isSimulationOpen, setIsSimulationOpen] = useState<boolean>(false);
+  const [simulationPayload, setSimulationPayload] = useState<string>('');
   const [douchetteInput, setDouchetteInput] = useState<string>('');
 
   const handleProcessScannedCode = (scannedText: string) => {
@@ -274,47 +292,112 @@ export default function Inventaire({
     setDouchetteInput('');
   };
 
-  // Camera scanner initialization
+  // Keep handleProcessScannedCode up-to-date for global native Android triggers
+  const handleProcessScannedCodeRef = React.useRef(handleProcessScannedCode);
   useEffect(() => {
-    let html5QrCode: Html5Qrcode | null = null;
-    
-    if (isCameraActive) {
-      const startCamera = async () => {
-        try {
-          html5QrCode = new Html5Qrcode("camera-scanner-element");
-          await html5QrCode.start(
-            { facingMode: "environment" },
-            {
-              fps: 10,
-              qrbox: (width, height) => {
-                const size = Math.min(width, height) * 0.7;
-                return { width: size, height: size };
-              },
-            },
-            (decodedText) => {
-              handleProcessScannedCode(decodedText);
-              setIsCameraActive(false);
-            },
-            () => {
-              // Ignore frame analysis errors
-            }
-          );
-        } catch (err: any) {
-          console.error("Camera scanner start error:", err);
-          triggerErrorMsg(`Impossible d'accéder à la caméra : ${err.message || err}`);
-          setIsCameraActive(false);
-        }
-      };
+    handleProcessScannedCodeRef.current = handleProcessScannedCode;
+  }, [handleProcessScannedCode]);
 
-      const timer = setTimeout(startCamera, 350);
-      return () => {
-        clearTimeout(timer);
-        if (html5QrCode && html5QrCode.isScanning) {
-          html5QrCode.stop().catch(err => console.warn("Error stopping camera:", err));
+  useEffect(() => {
+    // Register global bridge callbacks that the native Android app (APK container) will call on detection
+    (window as any).onQRCodeScanned = (scannedText: string) => {
+      console.log("[Native Android] onQRCodeScanned callback invoked:", scannedText);
+      handleProcessScannedCodeRef.current(scannedText);
+    };
+
+    (window as any).onBarcodeScanned = (scannedText: string) => {
+      console.log("[Native Android] onBarcodeScanned callback invoked:", scannedText);
+      handleProcessScannedCodeRef.current(scannedText);
+    };
+
+    (window as any).handleAndroidBarcode = (scannedText: string) => {
+      console.log("[Native Android] handleAndroidBarcode callback invoked:", scannedText);
+      handleProcessScannedCodeRef.current(scannedText);
+    };
+
+    return () => {
+      delete (window as any).onQRCodeScanned;
+      delete (window as any).onBarcodeScanned;
+      delete (window as any).handleAndroidBarcode;
+    };
+  }, []);
+
+  const triggerNativeAndroidScanner = async () => {
+    let triggered = false;
+
+    // 1. Android WebView JavascriptInterface (Standard custom native bridges)
+    const androidObj = (window as any).Android || (window as any).AndroidInterface || (window as any).AndroidScanner || (window as any).JSInterface;
+    if (androidObj) {
+      try {
+        if (typeof androidObj.startQRScanner === 'function') {
+          androidObj.startQRScanner();
+          triggered = true;
+        } else if (typeof androidObj.startScan === 'function') {
+          androidObj.startScan();
+          triggered = true;
+        } else if (typeof androidObj.scanQRCode === 'function') {
+          androidObj.scanQRCode();
+          triggered = true;
+        } else if (typeof androidObj.scanBarCode === 'function') {
+          androidObj.scanBarCode();
+          triggered = true;
+        } else if (typeof androidObj.triggerScanner === 'function') {
+          androidObj.triggerScanner();
+          triggered = true;
+        } else if (typeof androidObj.scan === 'function') {
+          androidObj.scan();
+          triggered = true;
         }
-      };
+      } catch (err) {
+        console.error("Error triggering native Android scanner interface:", err);
+      }
     }
-  }, [isCameraActive]);
+
+    // 2. Capacitor native plugin dynamic execution (works offline, based on ML Kit Barcode scanning)
+    if (!triggered && (window as any).Capacitor) {
+      try {
+        const cap = (window as any).Capacitor;
+        if (cap.Plugins) {
+          // Option A: @capacitor-mlkit/barcode-scanning
+          const BarcodeScanning = cap.Plugins.BarcodeScanning;
+          if (BarcodeScanning && typeof BarcodeScanning.scan === 'function') {
+            const result = await BarcodeScanning.scan();
+            if (result && result.barcode && result.barcode.displayValue) {
+              handleProcessScannedCode(result.barcode.displayValue);
+            } else if (result && result.value) {
+              handleProcessScannedCode(result.value);
+            }
+            triggered = true;
+          }
+
+          // Option B: @capacitor-community/barcode-scanner
+          const BarcodeScanner = cap.Plugins.BarcodeScanner;
+          if (!triggered && BarcodeScanner && typeof BarcodeScanner.startScan === 'function') {
+            if (typeof BarcodeScanner.hideBackground === 'function') {
+              await BarcodeScanner.hideBackground();
+            }
+            document.body.classList.add("scanner-active");
+            const result = await BarcodeScanner.startScan({ targetedFormats: ['QR_CODE'] });
+            document.body.classList.remove("scanner-active");
+            if (typeof BarcodeScanner.showBackground === 'function') {
+              await BarcodeScanner.showBackground();
+            }
+            if (result && result.hasContent) {
+              handleProcessScannedCode(result.content);
+            }
+            triggered = true;
+          }
+        }
+      } catch (err) {
+        console.error("Error calling Capacitor plugins:", err);
+      }
+    }
+
+    // 3. Browser simulation mode: If not inside the native wrapper, open the tester/simulator modal
+    if (!triggered) {
+      setIsSimulationOpen(true);
+    }
+  };
 
   // Reliable print effect triggered after DOM rendering is complete
   useEffect(() => {
@@ -329,11 +412,14 @@ export default function Inventaire({
   }, [pendingPrint]);
 
   // Paginate gammes for printing/previews with dynamic height estimation for A4 boundaries
-  const getFormattedPrintPages = (agentId: string) => {
+  const getFormattedPrintPages = (agentId: string, validationId?: string) => {
     const activeGammes = gammes.filter(g => {
       return g.perfumes.some(perfume => {
         return inventories.some(inv => {
-          const isOwn = inv.agentId === agentId && inv.gammeId === g.id;
+          const matchesSession = validationId 
+            ? (inv.validationId === validationId || (!inv.validationId && inv.id === validationId))
+            : (inv.agentId === agentId);
+          const isOwn = matchesSession && inv.gammeId === g.id;
           if (!isOwn) return false;
           if (inv.type === 'mono') {
             return inv.entries.some(e => e.perfume === perfume);
@@ -376,7 +462,10 @@ export default function Inventaire({
     const getLastActivePerfume = (g: typeof activeGammes[0]) => {
       const gPerfumes = g.perfumes.filter(p => {
         return inventories.some(inv => {
-          return inv.agentId === agentId && inv.gammeId === g.id && (inv.type === 'mono' ? inv.entries.some(e => e.perfume === p) : getDominantPerfumeForMixte(inv) === p);
+          const matchesSession = validationId 
+            ? (inv.validationId === validationId || (!inv.validationId && inv.id === validationId))
+            : (inv.agentId === agentId);
+          return matchesSession && inv.gammeId === g.id && (inv.type === 'mono' ? inv.entries.some(e => e.perfume === p) : getDominantPerfumeForMixte(inv) === p);
         });
       });
       return gPerfumes[gPerfumes.length - 1];
@@ -386,7 +475,10 @@ export default function Inventaire({
     activeGammes.forEach(gamme => {
       const activePerfumes = gamme.perfumes.filter(perfume => {
         return inventories.some(inv => {
-          const isOwn = inv.agentId === agentId && inv.gammeId === gamme.id;
+          const matchesSession = validationId 
+            ? (inv.validationId === validationId || (!inv.validationId && inv.id === validationId))
+            : (inv.agentId === agentId);
+          const isOwn = matchesSession && inv.gammeId === gamme.id;
           if (!isOwn) return false;
           if (inv.type === 'mono') {
             return inv.entries.some(e => e.perfume === perfume);
@@ -401,7 +493,10 @@ export default function Inventaire({
 
       activePerfumes.forEach(perfume => {
         const relevantItems = inventories.filter(inv => {
-          const isOwn = inv.agentId === agentId && inv.gammeId === gamme.id;
+          const matchesSession = validationId 
+            ? (inv.validationId === validationId || (!inv.validationId && inv.id === validationId))
+            : (inv.agentId === agentId);
+          const isOwn = matchesSession && inv.gammeId === gamme.id;
           if (!isOwn) return false;
           if (inv.type === 'mono') {
             return inv.entries.some(e => e.perfume === perfume);
@@ -754,38 +849,21 @@ export default function Inventaire({
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           
-          {/* CAMERA PHONE SCANNER */}
+          {/* CAMERA PHONE SCANNER - NATIVE ANDROID */}
           <div className="border border-slate-200/80 p-5 rounded-2xl bg-slate-50 flex flex-col justify-between space-y-4">
             <div className="text-left">
-              <span className="text-[10px] uppercase font-bold text-indigo-600 tracking-wider">Option A : Caméra Mobile / Tablette</span>
-              <p className="text-xs text-slate-650 font-semibold mt-1">Flashez le QR Code avec l'appareil photo arrière de votre appareil.</p>
+              <span className="text-[10px] uppercase font-bold text-indigo-600 tracking-wider">Option A : Caméra Mobile (Android Natif)</span>
+              <p className="text-xs text-slate-650 font-semibold mt-1">Utilise l'appareil photo avec Google ML Kit natif de l'appareil sans demande de permission média web.</p>
             </div>
 
-            {isCameraActive ? (
-              <div className="space-y-3">
-                <div className="relative border-2 border-indigo-600 rounded-2xl overflow-hidden bg-black max-w-sm mx-auto aspect-square">
-                  <div id="camera-scanner-element" className="w-full h-full"></div>
-                  <div className="absolute inset-0 pointer-events-none border-4 border-dashed border-white/40 m-8 rounded-xl animate-pulse flex items-center justify-center">
-                    <span className="text-white/80 text-[10px] bg-slate-900/60 px-2 py-1 rounded font-bold uppercase tracking-widest">Ciblez le QR Code</span>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsCameraActive(false)}
-                  className="w-full py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl cursor-pointer transition-colors"
-                >
-                  Arrêter la caméra
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setIsCameraActive(true)}
-                className="w-full py-3 bg-indigo-650 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 shadow-xs shadow-indigo-150"
-              >
-                <Camera className="w-4 h-4" /> Activer le Scanner Caméra
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={triggerNativeAndroidScanner}
+              className="w-full py-3.5 bg-indigo-650 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 shadow-sm shadow-indigo-150 group"
+            >
+              <QrCode className="w-4 h-4 group-hover:scale-110 transition-transform animate-pulse" /> 
+              <span>Scanner un QR Code</span>
+            </button>
           </div>
 
           {/* PHYSICAL DOUCHETTE BARCODE SCANNER */}
@@ -1291,6 +1369,16 @@ export default function Inventaire({
                         {(currentUser.isAdmin || session.agentId === currentUser.id) ? (
                           <>
                             <button
+                              onClick={() => {
+                                setSelectedSessionForPrint(session);
+                              }}
+                              className="p-1 px-2 border border-slate-200 rounded-lg hover:bg-slate-100 text-slate-600 transition-all font-semibold cursor-pointer flex items-center gap-1"
+                              title="Imprimer cet inventaire"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                              <span className="text-[10px]">Imprimer</span>
+                            </button>
+                            <button
                               onClick={() => handleStartEditSession(session)}
                               className="p-1 px-2 border border-slate-200 rounded-lg hover:bg-slate-100 text-slate-600 transition-all font-semibold cursor-pointer flex items-center gap-1"
                               title="Modifier cet inventaire"
@@ -1324,9 +1412,11 @@ export default function Inventaire({
       {pendingPrint && createPortal(
         <div className="hidden print:block bg-white text-black p-0" id="print-inventory-area">
           {(() => {
-            const printedPages = getFormattedPrintPages(currentUser.id);
-            const totalActivePalettes = inventories.filter(inv => inv.agentId === currentUser.id).length;
-            const grandTotalQty = inventories.filter(inv => inv.agentId === currentUser.id).reduce((acc, item) => acc + item.entries.reduce((sum, e) => sum + e.quantity, 0), 0);
+            const userSessions = getValidatedSessions(inventories).filter(s => s.agentId === currentUser.id);
+            const mostRecentSessionId = userSessions.length > 0 ? userSessions[0].id : undefined;
+            const printedPages = getFormattedPrintPages(currentUser.id, mostRecentSessionId);
+            const totalActivePalettes = inventories.filter(inv => mostRecentSessionId ? (inv.validationId === mostRecentSessionId || (!inv.validationId && inv.id === mostRecentSessionId)) : inv.agentId === currentUser.id).length;
+            const grandTotalQty = inventories.filter(inv => mostRecentSessionId ? (inv.validationId === mostRecentSessionId || (!inv.validationId && inv.id === mostRecentSessionId)) : inv.agentId === currentUser.id).reduce((acc, item) => acc + item.entries.reduce((sum, e) => sum + e.quantity, 0), 0);
 
             return printedPages.map((page, pageIdx) => (
               <div key={pageIdx} className="page-break-after p-0 w-full flex flex-col justify-start gap-6 bg-white text-slate-800 relative font-sans" style={{ pageBreakAfter: 'always' }}>
@@ -1479,9 +1569,11 @@ export default function Inventaire({
             {/* Simulated Paper Sheets Stack */}
             <div className="p-8 overflow-y-auto flex-1 bg-slate-100 flex flex-col items-center gap-8 w-full">
               {(() => {
-                const printedPages = getFormattedPrintPages(currentUser.id);
-                const totalActivePalettes = inventories.filter(inv => inv.agentId === currentUser.id).length;
-                const grandTotalQty = inventories.filter(inv => inv.agentId === currentUser.id).reduce((acc, item) => acc + item.entries.reduce((sum, e) => sum + e.quantity, 0), 0);
+                const userSessions = getValidatedSessions(inventories).filter(s => s.agentId === currentUser.id);
+                const mostRecentSessionId = userSessions.length > 0 ? userSessions[0].id : undefined;
+                const printedPages = getFormattedPrintPages(currentUser.id, mostRecentSessionId);
+                const totalActivePalettes = inventories.filter(inv => mostRecentSessionId ? (inv.validationId === mostRecentSessionId || (!inv.validationId && inv.id === mostRecentSessionId)) : inv.agentId === currentUser.id).length;
+                const grandTotalQty = inventories.filter(inv => mostRecentSessionId ? (inv.validationId === mostRecentSessionId || (!inv.validationId && inv.id === mostRecentSessionId)) : inv.agentId === currentUser.id).reduce((acc, item) => acc + item.entries.reduce((sum, e) => sum + e.quantity, 0), 0);
 
                 if (totalActivePalettes === 0) {
                   return (
@@ -1673,7 +1765,7 @@ export default function Inventaire({
               <button
                 type="button"
                 onClick={() => setEditingSession(null)}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 cursor-pointer bg-white border border-slate-200 rounded-xl transition-all"
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-850 cursor-pointer bg-white border border-slate-200 rounded-xl transition-all"
               >
                 Annuler
               </button>
@@ -1699,6 +1791,235 @@ export default function Inventaire({
 
           </div>
         </div>
+      )}
+
+      {/* SCANNER SIMULATION MODAL (FOR WEB PREVIEW COMPATIBILITY & OFFLINE TESTING) */}
+      {isSimulationOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto no-print">
+          <div className="bg-white rounded-3xl max-w-lg w-full shadow-2xl border border-slate-200 flex flex-col">
+            
+            {/* Header */}
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50 rounded-t-3xl text-slate-850">
+              <div className="text-left">
+                <h3 className="text-sm font-bold text-slate-900 font-sans flex items-center gap-2">
+                  <QrCode className="w-5 h-5 text-indigo-600 animate-pulse" /> Simulateur Scanner Android Natif
+                </h3>
+                <p className="text-[11px] text-slate-500 font-sans">
+                  Mode Émulation Web (Google ML Kit simulé)
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsSimulationOpen(false)}
+                className="bg-white border border-slate-200 text-slate-400 hover:text-slate-600 p-1.5 rounded-xl cursor-pointer transition-all"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 space-y-4 text-left">
+              <div className="bg-indigo-50 border border-indigo-150 p-4 rounded-xl space-y-1.5">
+                <h4 className="text-xs font-bold text-indigo-900 uppercase tracking-wider">💡 Comportement Réel de l'APK</h4>
+                <p className="text-[11px] text-indigo-750 leading-relaxed font-semibold">
+                  Dans l'application Android (.APK), cliquer sur ce bouton ouvre instantanément l'appareil photo avec un lecteur de codes-barres matériel natif basé sur <strong className="font-extrabold">Google ML Kit</strong>.
+                </p>
+                <ul className="text-[10px] text-indigo-750 list-disc list-inside space-y-1">
+                  <li>Aucun bug de permission WebRTC ou navigateur</li>
+                  <li>Détection instantanée et fermeture automatique du scanner</li>
+                  <li>Fonctionne entièrement <strong className="font-bold">hors ligne</strong> dans les hangars de stockage</li>
+                </ul>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[11px] font-bold text-slate-600 block uppercase">Entrez ou Collez un payload QR de Palette :</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="PALETTE|N°_Palette|ID_Gamme|Nom_Gamme|mono/mixte|Parfum:Qte"
+                    value={simulationPayload}
+                    onChange={(e) => setSimulationPayload(e.target.value)}
+                    className="flex-1 px-3 py-2 border border-slate-250 rounded-xl text-xs font-mono bg-slate-50 text-slate-800 outline-hidden focus:ring-1 focus:ring-indigo-500 font-bold"
+                  />
+                  <button
+                    onClick={() => {
+                      if (!simulationPayload.trim()) return;
+                      handleProcessScannedCode(simulationPayload.trim());
+                      setSimulationPayload('');
+                      setIsSimulationOpen(false);
+                    }}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl transition-all cursor-pointer shadow-xs"
+                  >
+                    Simuler Scan
+                  </button>
+                </div>
+              </div>
+
+              {/* Quick simulation shortcuts */}
+              <div className="space-y-2">
+                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Raccourcis de Test Rapide (Gamme & Parfums réels) :</span>
+                <div className="grid grid-cols-1 gap-1.5 max-h-48 overflow-y-auto pr-1">
+                  {gammes.flatMap(g => 
+                    g.perfumes.map(p => {
+                      const payload = `PALETTE|sc_${Math.floor(100 + Math.random() * 900)}|${g.id}|${g.name}|mono|${p}:${g.standardQuantity || 100}`;
+                      return (
+                        <button
+                          key={`${g.id}-${p}`}
+                          onClick={() => {
+                            handleProcessScannedCode(payload);
+                            setIsSimulationOpen(false);
+                          }}
+                          className="w-full text-left p-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-200/60 rounded-xl text-xs font-semibold text-slate-700 flex items-center justify-between cursor-pointer transition-all"
+                        >
+                          <span className="truncate max-w-[280px] font-bold text-slate-850">{g.name} — <span className="font-semibold text-indigo-600">{p}</span></span>
+                          <span className="text-[10px] text-slate-400 font-mono">Simuler</span>
+                        </button>
+                      );
+                    })
+                  ).slice(0, 5)}
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 bg-slate-50 border-t border-slate-100 rounded-b-3xl flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsSimulationOpen(false)}
+                className="px-5 py-2 text-xs font-bold text-slate-600 hover:text-slate-850 bg-white border border-slate-200 rounded-xl cursor-pointer transition-all"
+              >
+                Fermer
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* PRINT-ONLY SPECIFIC SESSION */}
+      {selectedSessionForPrint && createPortal(
+        <div className="hidden print:block bg-white text-black p-0" id="print-specific-session-area">
+          {(() => {
+            const printedPages = getFormattedPrintPages(selectedSessionForPrint.agentId, selectedSessionForPrint.id);
+            const totalActivePalettes = inventories.filter(inv => (inv.validationId === selectedSessionForPrint.id || (!inv.validationId && inv.id === selectedSessionForPrint.id))).length;
+            const grandTotalQty = inventories.filter(inv => (inv.validationId === selectedSessionForPrint.id || (!inv.validationId && inv.id === selectedSessionForPrint.id))).reduce((acc, item) => acc + item.entries.reduce((sum, e) => sum + e.quantity, 0), 0);
+
+            return printedPages.map((page, pageIdx) => (
+              <div key={pageIdx} className="page-break-after p-0 w-full flex flex-col justify-start gap-6 bg-white text-slate-800 relative font-sans" style={{ pageBreakAfter: 'always' }}>
+                <div className="space-y-6">
+                  {/* Print Document Header */}
+                  <div className="flex justify-between items-start border-b border-slate-350 pb-4 text-left">
+                    <div>
+                      <h1 className="text-lg font-extrabold text-slate-900 tracking-tight uppercase">
+                        Rapport d'Inventaire Individuel Consolidé {printedPages.length > 1 ? `(${pageIdx + 1}/${printedPages.length})` : ''}
+                      </h1>
+                      <div className="flex items-center gap-2 mt-1.5 text-[10px] text-slate-500">
+                        <span>Comptage {selectedSessionForPrint.numberCode}</span>
+                        <span>•</span>
+                        <span>YETISTOCK SUIVI</span>
+                      </div>
+                    </div>
+                    <div className="text-right text-[10px] text-slate-600 space-y-0.5">
+                      <p className="font-bold text-slate-900">Opérateur : {selectedSessionForPrint.agentName}</p>
+                      <p>Dernière activité : {new Date(selectedSessionForPrint.createdAt).toLocaleDateString('fr-FR')} {new Date(selectedSessionForPrint.createdAt).toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit', hour12: false})}</p>
+                      <p className="font-semibold text-blue-700">Total Palettes : {totalActivePalettes}</p>
+                    </div>
+                  </div>
+
+                  {/* Inventories Aggregation Blocks */}
+                  {page.rows.length === 0 ? (
+                    <div className="text-center p-12 text-slate-400 italic text-xs">
+                      Aucune palette physique dans cet inventaire.
+                    </div>
+                  ) : (
+                    <div className="border border-slate-300 rounded-xl overflow-hidden bg-white shadow-none text-left">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <tbody>
+                          {page.rows.map((row, rowIdx) => {
+                            if (row.type === 'product-header') {
+                              return (
+                                <tr key={`g-row-${rowIdx}`} className="bg-slate-100/90 font-extrabold text-xs uppercase tracking-wider border-b border-slate-355">
+                                  <td colSpan={3} className="py-2.5 px-3 font-extrabold text-slate-900">
+                                    {row.gammeName} {row.isContinuation ? '(suite)' : ''}
+                                  </td>
+                                </tr>
+                              );
+                            }
+
+                            return (
+                              <tr key={`p-row-${rowIdx}`} className="border-b border-slate-150 last:border-b-0 hover:bg-slate-50/20">
+                                <td className="w-1/4 min-w-[120px] font-semibold text-slate-800 py-3 px-3 border-r border-slate-150 align-middle">
+                                  {row.perfumeName} {row.isContinuation ? '(suite)' : ''}
+                                </td>
+                                <td className="py-2 px-3 align-middle">
+                                  <div className="flex flex-wrap gap-2 items-center">
+                                    {row.items?.map((item, idx) => {
+                                      const entry = item.entries.find(e => e.perfume === row.perfumeKey);
+                                      const count = entry ? entry.quantity : 0;
+                                      return (
+                                        <div key={idx} className="break-inside-avoid print:break-inside-avoid inline-block flex flex-col items-center justify-center gap-0.5 my-1">
+                                          {item.type === 'mixte' ? (
+                                            <>
+                                              <div className="w-8 h-8 rounded-lg border-2 border-amber-600 bg-amber-50 text-amber-950 flex items-center justify-center font-extrabold text-xs shadow-3xs">
+                                                {count}
+                                              </div>
+                                              {(() => {
+                                                const initials = getOtherPerfumesInitials(item, row.perfumeKey);
+                                                return initials ? (
+                                                  <span className="text-[8px] font-bold text-amber-700 font-mono tracking-tighter uppercase leading-none">
+                                                    {initials}
+                                                  </span>
+                                                ) : null;
+                                              })()}
+                                            </>
+                                          ) : (
+                                            <span className="w-8 h-8 rounded-full border-2 border-slate-855 bg-slate-55 text-slate-900 flex items-center justify-center font-extrabold text-xs shadow-3xs">
+                                              {count}
+                                            </span>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </td>
+                                <td className="text-right font-mono text-xs font-bold text-slate-900 border-l border-slate-150 pl-3 min-w-[100px] py-3 px-3 pr-4 align-middle">
+                                  {row.totalQuantity !== undefined ? `Total : ${row.totalQuantity} Carton` : <span className="text-[10px] text-slate-400 font-normal italic">Suite...</span>}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* General Totals and Sign Box flowing at the very end cleanly */}
+                {pageIdx === printedPages.length - 1 && (
+                  <div className="break-inside-avoid print:break-inside-avoid space-y-4 pt-4 border-t border-slate-200 mt-4 bg-white text-left">
+                    <div className="flex justify-end pr-4 font-bold text-slate-900 text-sm">
+                      Total Général : {grandTotalQty} Carton
+                    </div>
+                    
+                    <div className="flex justify-between items-center text-[10px] text-slate-500 pt-2 pb-1">
+                      <div>
+                        <p className="font-bold text-slate-700 uppercase">Document Certifié Conforme</p>
+                        <p className="text-slate-400 mt-0.5">Signature de l'agent opérateur de conditionnement</p>
+                      </div>
+                      <div className="w-36 h-12 border border-dashed border-slate-300 rounded flex items-center justify-center italic text-slate-300 font-serif bg-white">
+                        Signature Agent
+                      </div>
+                    </div>
+                    <div className="text-center text-[8px] text-slate-400 border-t pt-2 uppercase font-mono tracking-wider">
+                      YETISTOCK SUIVI • Rapport Continu Épargnant le Papier
+                    </div>
+                  </div>
+                )}
+              </div>
+            ));
+          })()}
+        </div>,
+        document.body
       )}
 
     </div>

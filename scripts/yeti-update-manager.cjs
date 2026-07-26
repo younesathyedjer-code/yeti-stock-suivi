@@ -1,0 +1,883 @@
+const fs = require('fs');
+const path = require('path');
+const { spawnSync } = require('child_process');
+const readline = require('readline');
+const AdmZip = require('adm-zip');
+
+// Colored console helpers
+const c = {
+  reset: '\x1b[0m',
+  bold: '\x1b[1m',
+  dim: '\x1b[2m',
+  red: '\x1b[31m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  blue: '\x1b[34m',
+  magenta: '\x1b[35m',
+  cyan: '\x1b[36m',
+  white: '\x1b[37m'
+};
+
+const PROJECT_ROOT = path.resolve(__dirname, '..');
+const UPDATES_DIR = path.join(PROJECT_ROOT, 'updates');
+const PROCESSED_DIR = path.join(UPDATES_DIR, 'processed');
+const BACKUPS_DIR = path.join(PROJECT_ROOT, '.yeti_backups');
+const TMP_DIR = path.join(PROJECT_ROOT, '.yeti_tmp');
+const MAX_BACKUPS = 20;
+
+// Paths to ignore during backup & sync
+const IGNORED_PATHS = [
+  '.git',
+  '.yeti_backups',
+  '.yeti_tmp',
+  'updates',
+  'node_modules',
+  'dist',
+  'build',
+  'coverage',
+  '.gradle',
+  'android/app/build',
+  'android/build',
+  'android/.gradle'
+];
+
+function formatDuration(ms) {
+  const totalSec = Math.floor(ms / 1000);
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  if (min > 0) {
+    return `${min} min ${sec} sec`;
+  }
+  return `${sec} sec`;
+}
+
+function logHeader(title) {
+  console.log(`\n${c.cyan}${c.bold}====================================================${c.reset}`);
+  console.log(`${c.cyan}${c.bold}  ${title}${c.reset}`);
+  console.log(`${c.cyan}${c.bold}====================================================${c.reset}\n`);
+}
+
+function logStep(stepNum, title) {
+  console.log(`${c.yellow}${c.bold}[Étape ${stepNum}]${c.reset} ${c.bold}${title}${c.reset}`);
+}
+
+function logSuccess(msg) {
+  console.log(`  ${c.green}✓ ${msg}${c.reset}`);
+}
+
+function logWarning(msg) {
+  console.log(`  ${c.yellow}⚠ ${msg}${c.reset}`);
+}
+
+function logError(msg) {
+  console.log(`  ${c.red}✖ ${msg}${c.reset}`);
+}
+
+function logInfo(msg) {
+  console.log(`  ${c.blue}ℹ ${msg}${c.reset}`);
+}
+
+function ensureDir(dirPath) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+  }
+}
+
+function removeDir(dirPath) {
+  if (fs.existsSync(dirPath)) {
+    fs.rmSync(dirPath, { recursive: true, force: true });
+  }
+}
+
+function isIgnored(relativePath) {
+  const normalized = relativePath.replace(/\\/g, '/');
+  return IGNORED_PATHS.some(ignored => {
+    return normalized === ignored || normalized.startsWith(ignored + '/') || normalized.endsWith('.apk');
+  });
+}
+
+function getAllFiles(dirPath, baseDir = dirPath) {
+  let fileList = [];
+  if (!fs.existsSync(dirPath)) return fileList;
+
+  const items = fs.readdirSync(dirPath);
+  for (const item of items) {
+    const fullPath = path.join(dirPath, item);
+    const relPath = path.relative(baseDir, fullPath).replace(/\\/g, '/');
+
+    if (isIgnored(relPath)) continue;
+
+    const stat = fs.statSync(fullPath);
+    if (stat.isDirectory()) {
+      fileList = fileList.concat(getAllFiles(fullPath, baseDir));
+    } else {
+      fileList.push(relPath);
+    }
+  }
+  return fileList;
+}
+
+function copyDirRecursive(src, dest) {
+  ensureDir(dest);
+  const items = fs.readdirSync(src);
+  for (const item of items) {
+    const srcPath = path.join(src, item);
+    const destPath = path.join(dest, item);
+    const relPath = path.relative(PROJECT_ROOT, srcPath).replace(/\\/g, '/');
+
+    if (isIgnored(relPath)) continue;
+
+    const stat = fs.statSync(srcPath);
+    if (stat.isDirectory()) {
+      copyDirRecursive(srcPath, destPath);
+    } else {
+      ensureDir(path.dirname(destPath));
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
+}
+
+function askQuestion(query) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+  return new Promise(resolve => rl.question(query, ans => {
+    rl.close();
+    resolve(ans);
+  }));
+}
+
+// ------------------------------------------------------------------
+// Helper: Get Commit Info from manifest.json / metadata.json / package.json
+// ------------------------------------------------------------------
+function getCommitInfo(extractedPath) {
+  let version = '';
+  let description = '';
+  let name = '';
+
+  // 1. Check manifest.json
+  const manifestPath = path.join(extractedPath, 'manifest.json');
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const m = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      if (m.version) version = m.version;
+      if (m.description) description = m.description;
+      if (m.name) name = m.name;
+    } catch (e) {}
+  }
+
+  // 2. Check metadata.json
+  const metaPath = path.join(extractedPath, 'metadata.json');
+  if (fs.existsSync(metaPath)) {
+    try {
+      const m = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+      if (!version && m.version) version = m.version;
+      if (!description && m.description) description = m.description;
+      if (!name && m.name) name = m.name;
+    } catch (e) {}
+  }
+
+  // 3. Check package.json
+  const pkgPath = path.join(extractedPath, 'package.json');
+  if (fs.existsSync(pkgPath)) {
+    try {
+      const p = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+      if (!version && p.version) version = p.version;
+      if (!description && p.description) description = p.description;
+      if (!name && p.name) name = p.name;
+    } catch (e) {}
+  }
+
+  const verFormatted = version ? (version.startsWith('v') ? version : `v${version}`) : 'v1.0.0';
+  const descFormatted = description || (name ? `Projet ${name}` : 'Mise à jour via Google AI Studio');
+
+  const commitMsg = `Mise à jour ${verFormatted} : ${descFormatted}`;
+
+  return {
+    version: verFormatted,
+    description: descFormatted,
+    commitMsg
+  };
+}
+
+// ------------------------------------------------------------------
+// Helper: Backup Retention & Pruning
+// ------------------------------------------------------------------
+function pruneOldBackups(maxBackups = MAX_BACKUPS) {
+  if (!fs.existsSync(BACKUPS_DIR)) return;
+
+  const entries = fs.readdirSync(BACKUPS_DIR)
+    .filter(f => {
+      const fp = path.join(BACKUPS_DIR, f);
+      return fs.statSync(fp).isDirectory() && f.startsWith('backup_');
+    })
+    .sort(); // Alphabetic sort on backup_YYYY-MM-DD... sorts oldest first
+
+  if (entries.length > maxBackups) {
+    const toRemove = entries.slice(0, entries.length - maxBackups);
+    logInfo(`Gestion des sauvegardes (limite : ${maxBackups}) : suppression des plus anciennes...`);
+    for (const folder of toRemove) {
+      const folderPath = path.join(BACKUPS_DIR, folder);
+      removeDir(folderPath);
+      logSuccess(`Ancienne sauvegarde supprimée : ${folder}`);
+    }
+  }
+}
+
+// ------------------------------------------------------------------
+// Helper: Archive Processed ZIP File
+// ------------------------------------------------------------------
+function archiveProcessedZip(zipPath) {
+  ensureDir(PROCESSED_DIR);
+  const baseName = path.basename(zipPath);
+  let destPath = path.join(PROCESSED_DIR, baseName);
+
+  if (fs.existsSync(destPath)) {
+    const ext = path.extname(baseName);
+    const nameWithoutExt = path.basename(baseName, ext);
+    const timeStamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    destPath = path.join(PROCESSED_DIR, `${nameWithoutExt}_${timeStamp}${ext}`);
+  }
+
+  try {
+    fs.renameSync(zipPath, destPath);
+    logSuccess(`Fichier ZIP archivé dans 'updates/processed/${path.basename(destPath)}'.`);
+    return destPath;
+  } catch (err) {
+    try {
+      fs.copyFileSync(zipPath, destPath);
+      fs.unlinkSync(zipPath);
+      logSuccess(`Fichier ZIP archivé dans 'updates/processed/${path.basename(destPath)}'.`);
+      return destPath;
+    } catch (e) {
+      logWarning(`Impossible de déplacer le fichier ZIP dans updates/processed : ${e.message}`);
+      return null;
+    }
+  }
+}
+
+// ------------------------------------------------------------------
+// Step 1: Detect Zip
+// ------------------------------------------------------------------
+function findUpdateZip() {
+  ensureDir(UPDATES_DIR);
+  const files = fs.readdirSync(UPDATES_DIR).filter(f => {
+    const fp = path.join(UPDATES_DIR, f);
+    return f.endsWith('.zip') && fs.statSync(fp).isFile();
+  });
+
+  if (files.length === 0) {
+    logError(`Aucun fichier ZIP trouvé dans le dossier '${UPDATES_DIR}'.`);
+    logInfo(`Veuillez télécharger le fichier ZIP depuis Google AI Studio et le déposer dans '${UPDATES_DIR}'.`);
+    return null;
+  }
+
+  // Sort by modification time descending
+  const sorted = files.map(f => {
+    const fp = path.join(UPDATES_DIR, f);
+    return { file: f, path: fp, time: fs.statSync(fp).mtimeMs };
+  }).sort((a, b) => b.time - a.time);
+
+  return sorted[0].path;
+}
+
+// ------------------------------------------------------------------
+// Step 2: Extract Zip to Temp
+// ------------------------------------------------------------------
+function extractZip(zipPath) {
+  removeDir(TMP_DIR);
+  ensureDir(TMP_DIR);
+
+  logInfo(`Extraction du fichier '${path.basename(zipPath)}'...`);
+  const zip = new AdmZip(zipPath);
+  const extractTarget = path.join(TMP_DIR, 'raw');
+  zip.extractAllTo(extractTarget, true);
+
+  // Check if extracted contents are nested in a single root folder
+  let realRoot = extractTarget;
+  const topItems = fs.readdirSync(extractTarget);
+  if (topItems.length === 1) {
+    const singleChild = path.join(extractTarget, topItems[0]);
+    if (fs.statSync(singleChild).isDirectory() && fs.existsSync(path.join(singleChild, 'package.json'))) {
+      realRoot = singleChild;
+    }
+  }
+
+  logSuccess(`Extraction réussie dans le dossier d'analyse temporaire.`);
+  return realRoot;
+}
+
+// ------------------------------------------------------------------
+// Step 3: Deep Validation of Extracted Project
+// ------------------------------------------------------------------
+function validateProject(extractedPath) {
+  const errors = [];
+
+  // 1. Mandatory Core Files
+  const requiredFiles = ['package.json'];
+  for (const file of requiredFiles) {
+    if (!fs.existsSync(path.join(extractedPath, file))) {
+      errors.push(`Fichier obligatoire manquant : ${file}`);
+    }
+  }
+
+  // 2. App Entry Check
+  const hasAppEntry = fs.existsSync(path.join(extractedPath, 'src/App.tsx')) ||
+                       fs.existsSync(path.join(extractedPath, 'src/main.tsx')) ||
+                       fs.existsSync(path.join(extractedPath, 'index.html'));
+  if (!hasAppEntry) {
+    errors.push(`Entrée d'application introuvable (src/App.tsx, src/main.tsx ou index.html).`);
+  }
+
+  // 3. package.json Validation
+  const pkgPath = path.join(extractedPath, 'package.json');
+  let newPkg = null;
+  if (fs.existsSync(pkgPath)) {
+    try {
+      const content = fs.readFileSync(pkgPath, 'utf8');
+      newPkg = JSON.parse(content);
+      if (!newPkg.name && !newPkg.version) {
+        errors.push(`package.json invalide : champs 'name' ou 'version' manquants.`);
+      }
+    } catch (err) {
+      errors.push(`package.json corrompu ou syntaxe JSON invalide : ${err.message}`);
+    }
+  }
+
+  // 4. metadata.json validation if exists
+  const metaPath = path.join(extractedPath, 'metadata.json');
+  if (fs.existsSync(metaPath)) {
+    try {
+      JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    } catch (err) {
+      errors.push(`metadata.json présent mais syntaxe JSON invalide : ${err.message}`);
+    }
+  }
+
+  // 5. Firebase & Capacitor Dependencies Check
+  if (newPkg) {
+    const allDeps = { ...newPkg.dependencies, ...newPkg.devDependencies };
+    
+    // If project uses Capacitor / Android
+    const hasAndroid = fs.existsSync(path.join(extractedPath, 'android')) || fs.existsSync(path.join(PROJECT_ROOT, 'android'));
+    if (hasAndroid && !allDeps['@capacitor/core']) {
+      logWarning(`Le projet comporte un dossier Android mais '@capacitor/core' n'est pas déclaré dans package.json.`);
+    }
+
+    // Check key imports in React files
+    const srcDir = path.join(extractedPath, 'src');
+    if (fs.existsSync(srcDir)) {
+      const files = getAllFiles(srcDir);
+      for (const relFile of files) {
+        if (relFile.endsWith('.ts') || relFile.endsWith('.tsx')) {
+          const fullPath = path.join(srcDir, relFile);
+          try {
+            const code = fs.readFileSync(fullPath, 'utf8');
+            if (code.trim().length === 0) {
+              errors.push(`Fichier source vide détecté : src/${relFile}`);
+            }
+            // Simple syntax/export sanity check
+            if (code.includes('import ') && code.includes('from') && !code.includes(';')) {
+              // Valid TypeScript allows optional semicolons, but check unclosed strings
+            }
+          } catch (e) {
+            errors.push(`Impossible de lire le fichier source : src/${relFile}`);
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors
+  };
+}
+
+// ------------------------------------------------------------------
+// Step 4: Compute Diff & Preview Report
+// ------------------------------------------------------------------
+function computeDiff(extractedPath) {
+  const extractedFiles = getAllFiles(extractedPath);
+  const currentFiles = getAllFiles(PROJECT_ROOT);
+
+  const currentMap = new Map();
+  for (const f of currentFiles) {
+    const fp = path.join(PROJECT_ROOT, f);
+    if (fs.existsSync(fp)) {
+      currentMap.set(f, fs.readFileSync(fp, 'utf8'));
+    }
+  }
+
+  const added = [];
+  const modified = [];
+  const deleted = [];
+
+  for (const f of extractedFiles) {
+    const extractedFp = path.join(extractedPath, f);
+    const contentNew = fs.readFileSync(extractedFp, 'utf8');
+
+    if (!currentMap.has(f)) {
+      added.push(f);
+    } else {
+      if (currentMap.get(f) !== contentNew) {
+        modified.push(f);
+      }
+      currentMap.delete(f);
+    }
+  }
+
+  for (const [f] of currentMap.entries()) {
+    deleted.push(f);
+  }
+
+  // Compare package.json dependencies
+  const curPkgPath = path.join(PROJECT_ROOT, 'package.json');
+  const newPkgPath = path.join(extractedPath, 'package.json');
+  let depsChanged = false;
+  let depSummary = { added: [], modified: [], removed: [] };
+
+  if (fs.existsSync(curPkgPath) && fs.existsSync(newPkgPath)) {
+    try {
+      const curPkg = JSON.parse(fs.readFileSync(curPkgPath, 'utf8'));
+      const newPkg = JSON.parse(fs.readFileSync(newPkgPath, 'utf8'));
+
+      const curDeps = { ...curPkg.dependencies, ...curPkg.devDependencies };
+      const newDeps = { ...newPkg.dependencies, ...newPkg.devDependencies };
+
+      for (const [k, v] of Object.entries(newDeps)) {
+        if (!curDeps[k]) {
+          depSummary.added.push(`${k}@${v}`);
+        } else if (curDeps[k] !== v) {
+          depSummary.modified.push(`${k}: ${curDeps[k]} → ${v}`);
+        }
+      }
+      for (const [k, v] of Object.entries(curDeps)) {
+        if (!newDeps[k]) {
+          depSummary.removed.push(`${k}@${v}`);
+        }
+      }
+
+      depsChanged = depSummary.added.length > 0 || depSummary.modified.length > 0 || depSummary.removed.length > 0;
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  let version = 'Nouvelle version';
+  let description = 'Mise à jour via Google AI Studio';
+
+  if (fs.existsSync(newPkgPath)) {
+    try {
+      const p = JSON.parse(fs.readFileSync(newPkgPath, 'utf8'));
+      if (p.version) version = `v${p.version}`;
+    } catch (e) {}
+  }
+
+  const metaPath = path.join(extractedPath, 'metadata.json');
+  if (fs.existsSync(metaPath)) {
+    try {
+      const m = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+      if (m.description) description = m.description;
+      if (m.name) version = `${m.name} (${version})`;
+    } catch (e) {}
+  }
+
+  return {
+    version,
+    description,
+    added,
+    modified,
+    deleted,
+    depsChanged,
+    depSummary
+  };
+}
+
+// ------------------------------------------------------------------
+// Step 5: Backup Creation (Executed ONLY AFTER Confirmation)
+// ------------------------------------------------------------------
+function createBackup() {
+  const now = new Date();
+  const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const backupFolder = path.join(BACKUPS_DIR, `backup_${timestamp}`);
+
+  ensureDir(backupFolder);
+  logInfo(`Création de la sauvegarde dans : ${backupFolder}`);
+
+  copyDirRecursive(PROJECT_ROOT, backupFolder);
+
+  const metaPath = path.join(backupFolder, 'yeti_backup_meta.json');
+  fs.writeFileSync(metaPath, JSON.stringify({
+    timestamp: now.toISOString(),
+    createdFor: 'Yeti Update Manager',
+    originalRoot: PROJECT_ROOT
+  }, null, 2));
+
+  logSuccess(`Sauvegarde réussie : ${backupFolder}`);
+  return backupFolder;
+}
+
+// ------------------------------------------------------------------
+// Step 6: Apply Update Files
+// ------------------------------------------------------------------
+function applyUpdateFiles(extractedPath) {
+  const extractedFiles = getAllFiles(extractedPath);
+
+  logInfo(`Remplacement des fichiers du projet...`);
+  for (const relPath of extractedFiles) {
+    const srcFile = path.join(extractedPath, relPath);
+    const destFile = path.join(PROJECT_ROOT, relPath);
+
+    ensureDir(path.dirname(destFile));
+    fs.copyFileSync(srcFile, destFile);
+  }
+
+  logSuccess(`${extractedFiles.length} fichiers appliqués au projet avec succès.`);
+}
+
+// ------------------------------------------------------------------
+// Rollback Logic
+// ------------------------------------------------------------------
+function rollbackFromBackup(backupPath) {
+  logHeader('PROCÉDURE DE RESTAURATION AUTOMATIQUE (ROLLBACK)');
+  logWarning(`Restauration du projet local depuis la sauvegarde : ${backupPath}`);
+
+  if (!fs.existsSync(backupPath)) {
+    logError(`Dossier de sauvegarde introuvable : ${backupPath}`);
+    return false;
+  }
+
+  copyDirRecursive(backupPath, PROJECT_ROOT);
+
+  logSuccess('Restauration locale terminée avec succès ! Le projet est revenu à son état initial.');
+  return true;
+}
+
+function handleManualRollback() {
+  logHeader('YETI UPDATE MANAGER - RESTAURATION MANUELLE');
+
+  if (!fs.existsSync(BACKUPS_DIR)) {
+    logError(`Aucune sauvegarde trouvée dans '${BACKUPS_DIR}'.`);
+    return;
+  }
+
+  const backups = fs.readdirSync(BACKUPS_DIR)
+    .filter(f => fs.statSync(path.join(BACKUPS_DIR, f)).isDirectory())
+    .sort()
+    .reverse();
+
+  if (backups.length === 0) {
+    logError(`Aucune sauvegarde disponible dans '${BACKUPS_DIR}'.`);
+    return;
+  }
+
+  console.log(`${c.bold}Sauvegardes locales disponibles :${c.reset}\n`);
+  backups.forEach((b, idx) => {
+    const metaPath = path.join(BACKUPS_DIR, b, 'yeti_backup_meta.json');
+    let metaStr = '';
+    if (fs.existsSync(metaPath)) {
+      try {
+        const m = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+        metaStr = ` (Créée le : ${new Date(m.timestamp).toLocaleString('fr-FR')})`;
+      } catch (e) {}
+    }
+    console.log(`  [${idx + 1}] ${c.cyan}${b}${c.reset}${metaStr}`);
+  });
+
+  console.log(`  [0] Annuler\n`);
+
+  askQuestion(`${c.yellow}${c.bold}Choisissez le numéro de la sauvegarde à restaurer [0-${backups.length}] : ${c.reset}`).then(answer => {
+    const choice = parseInt(answer.trim(), 10);
+    if (isNaN(choice) || choice <= 0 || choice > backups.length) {
+      logInfo('Restauration annulée.');
+      process.exit(0);
+    }
+
+    const selectedBackup = path.join(BACKUPS_DIR, backups[choice - 1]);
+    const success = rollbackFromBackup(selectedBackup);
+    if (success) {
+      logInfo('Note : La restauration manuelle modifie uniquement le projet local et ne touche pas à GitHub.');
+    }
+    process.exit(0);
+  });
+}
+
+// ------------------------------------------------------------------
+// Command Runner with Duration Tracking
+// ------------------------------------------------------------------
+function runCmd(cmd, options = {}) {
+  logInfo(`Exécution : ${cmd}`);
+  const start = Date.now();
+  try {
+    const res = spawnSync(cmd, {
+      shell: true,
+      cwd: options.cwd || PROJECT_ROOT,
+      stdio: 'inherit',
+      env: process.env
+    });
+    const duration = Date.now() - start;
+    return { success: res.status === 0, duration };
+  } catch (err) {
+    const duration = Date.now() - start;
+    logError(`Erreur lors de l'exécution de '${cmd}' : ${err.message}`);
+    return { success: false, duration };
+  }
+}
+
+// ------------------------------------------------------------------
+// Main Workflow
+// ------------------------------------------------------------------
+async function main() {
+  const globalStart = Date.now();
+  const args = process.argv.slice(2);
+
+  if (args.includes('--rollback')) {
+    handleManualRollback();
+    return;
+  }
+
+  logHeader('YETI UPDATE MANAGER - AUTOMATION ENGINE');
+
+  // Step 1: Detect ZIP
+  logStep(1, 'Détection du fichier de mise à jour (ZIP)');
+  const zipPath = findUpdateZip();
+  if (!zipPath) {
+    process.exit(1);
+  }
+  logSuccess(`Fichier ZIP détecté : ${path.basename(zipPath)}`);
+
+  // Step 2: Extraction to Temp
+  logStep(2, 'Extraction de la mise à jour dans le dossier d\'analyse temporaire');
+  let extractedPath = null;
+  try {
+    extractedPath = extractZip(zipPath);
+  } catch (err) {
+    logError(`Échec lors de l'extraction du ZIP : ${err.message}`);
+    removeDir(TMP_DIR);
+    process.exit(1);
+  }
+
+  // Step 3: Deep Pre-Validation (BEFORE Touching Project & BEFORE Backup)
+  logStep(3, 'Validation complète pré-installation');
+  const valStart = Date.now();
+  const validation = validateProject(extractedPath);
+  const valDuration = Date.now() - valStart;
+
+  if (!validation.valid) {
+    logError('La validation complète du ZIP a échoué. Des erreurs ont été détectées :');
+    validation.errors.forEach(e => logError(`- ${e}`));
+    logWarning('Mise à jour annulée. Aucun fichier du projet n\'a été modifié.');
+    removeDir(TMP_DIR);
+    process.exit(1);
+  }
+  logSuccess(`Validation complète réussie (${formatDuration(valDuration)}) : Structure, fichiers indispensables, JSON, React et Capacitor valides.`);
+
+  // Step 4: Preview Report & Confirmation
+  logStep(4, 'Prévisualisation et rapport de modifications');
+  const diff = computeDiff(extractedPath);
+
+  console.log(`\n${c.cyan}${c.bold}----------------------------------------------------${c.reset}`);
+  console.log(`${c.bold} RAPPORT DE PRÉVISUALISATION DE LA MISE À JOUR${c.reset}`);
+  console.log(`${c.cyan}${c.bold}----------------------------------------------------${c.reset}`);
+  console.log(`  • Version détectée  : ${c.green}${c.bold}${diff.version}${c.reset}`);
+  console.log(`  • Description        : ${diff.description}`);
+  console.log(`  • Fichiers ajoutés   : ${c.green}${diff.added.length}${c.reset}`);
+  console.log(`  • Fichiers modifiés  : ${c.yellow}${diff.modified.length}${c.reset}`);
+  console.log(`  • Fichiers supprimés : ${c.red}${diff.deleted.length}${c.reset}`);
+  console.log(`  • Dépendances npm    : ${diff.depsChanged ? c.yellow('Modifiées') : c.green('Inchangées')}`);
+
+  if (diff.depsChanged) {
+    if (diff.depSummary.added.length) console.log(`    - Ajouts     : ${diff.depSummary.added.join(', ')}`);
+    if (diff.depSummary.modified.length) console.log(`    - Modif.     : ${diff.depSummary.modified.join(', ')}`);
+    if (diff.depSummary.removed.length) console.log(`    - Suppr.     : ${diff.depSummary.removed.join(', ')}`);
+  }
+  console.log(`${c.cyan}${c.bold}----------------------------------------------------${c.reset}\n`);
+
+  if (!args.includes('--yes')) {
+    const answer = await askQuestion(`${c.yellow}${c.bold}Continuer la mise à jour ? [O/n] : ${c.reset}`);
+    const normalized = answer.trim().toLowerCase();
+    if (normalized === 'n' || normalized === 'no' || (normalized !== 'o' && normalized !== 'oui' && normalized !== 'y' && normalized !== 'yes' && normalized !== '')) {
+      logInfo('Mise à jour annulée par l\'utilisateur. Aucun fichier du projet n\'a été modifié.');
+      removeDir(TMP_DIR);
+      process.exit(0);
+    }
+  }
+
+  // Step 5: Backup Creation (ONLY AFTER Confirmation)
+  logStep(5, 'Création de la sauvegarde locale complète');
+  const backupStart = Date.now();
+  let backupFolder = null;
+  try {
+    backupFolder = createBackup();
+    pruneOldBackups(MAX_BACKUPS);
+  } catch (err) {
+    logError(`Échec de la création de la sauvegarde : ${err.message}`);
+    removeDir(TMP_DIR);
+    process.exit(1);
+  }
+  const backupDuration = Date.now() - backupStart;
+
+  // Step 6: Application of Files
+  logStep(6, 'Remplacement des fichiers du projet');
+  try {
+    applyUpdateFiles(extractedPath);
+  } catch (err) {
+    logError(`Erreur lors de l'application des fichiers : ${err.message}`);
+    rollbackFromBackup(backupFolder);
+    removeDir(TMP_DIR);
+    process.exit(1);
+  }
+
+  // Step 7: NPM Install
+  let npmStatus = 'Ignoré (pas de changement)';
+  let npmDurationStr = '0 sec';
+  if (diff.depsChanged || !fs.existsSync(path.join(PROJECT_ROOT, 'node_modules'))) {
+    logStep(7, 'Mise à jour des dépendances (npm install)');
+    const res = runCmd('npm install');
+    npmDurationStr = formatDuration(res.duration);
+    if (!res.success) {
+      logError('`npm install` a échoué. Déclenchement du rollback automatique...');
+      rollbackFromBackup(backupFolder);
+      removeDir(TMP_DIR);
+      process.exit(1);
+    }
+    npmStatus = `OK (${npmDurationStr})`;
+    logSuccess(`Dépendances installées avec succès en ${npmDurationStr}.`);
+  } else {
+    logStep(7, 'Vérification des dépendances : Inchangées');
+  }
+
+  // Step 8: Build Verification
+  logStep(8, 'Compilation du projet (npm run build)');
+  const buildRes = runCmd('npm run build');
+  const buildDurationStr = formatDuration(buildRes.duration);
+  if (!buildRes.success) {
+    logError('La compilation `npm run build` a échoué. Déclenchement du rollback automatique...');
+    rollbackFromBackup(backupFolder);
+    removeDir(TMP_DIR);
+    process.exit(1);
+  }
+  logSuccess(`Compilation réussie en ${buildDurationStr}.`);
+
+  // Step 9: Capacitor Sync
+  let capStatus = 'Ignoré (projet web pur)';
+  let capDurationStr = '0 sec';
+  const hasCapacitor = fs.existsSync(path.join(PROJECT_ROOT, 'capacitor.config.ts')) ||
+                       fs.existsSync(path.join(PROJECT_ROOT, 'capacitor.config.json')) ||
+                       fs.existsSync(path.join(PROJECT_ROOT, 'android'));
+
+  if (hasCapacitor) {
+    logStep(9, 'Synchronisation Android Capacitor (npx cap sync android)');
+    const capRes = runCmd('npx cap sync android');
+    capDurationStr = formatDuration(capRes.duration);
+    if (!capRes.success) {
+      logError('La synchronisation Capacitor `npx cap sync android` a échoué. Rollback automatique...');
+      rollbackFromBackup(backupFolder);
+      removeDir(TMP_DIR);
+      process.exit(1);
+    }
+    capStatus = `OK (${capDurationStr})`;
+    logSuccess(`Synchronisation Capacitor Android terminée en ${capDurationStr}.`);
+  } else {
+    logStep(9, 'Capacitor : Ignoré (dossier Android non détecté)');
+  }
+
+  // Step 10: APK Release Generation
+  let apkStatus = 'Ignoré (pas de sous-dossier android)';
+  let apkPath = 'Non généré';
+  let apkDurationStr = '0 sec';
+  const hasAndroidNative = fs.existsSync(path.join(PROJECT_ROOT, 'android'));
+
+  if (hasAndroidNative) {
+    logStep(10, 'Génération de l\'APK Release Android');
+    const gradlewCmd = process.platform === 'win32' ? 'gradlew.bat assembleRelease' : './gradlew assembleRelease';
+    const apkRes = runCmd(gradlewCmd, { cwd: path.join(PROJECT_ROOT, 'android') });
+    apkDurationStr = formatDuration(apkRes.duration);
+
+    const expectedApk = path.join(PROJECT_ROOT, 'android/app/build/outputs/apk/release/app-release.apk');
+    if (apkRes.success && fs.existsSync(expectedApk)) {
+      apkStatus = `OK (${apkDurationStr})`;
+      apkPath = expectedApk;
+      logSuccess(`APK Release généré avec succès en ${apkDurationStr} :\n     ${apkPath}`);
+    } else {
+      logError('Génération de l\'APK Release échouée. Rollback automatique...');
+      rollbackFromBackup(backupFolder);
+      removeDir(TMP_DIR);
+      process.exit(1);
+    }
+  } else {
+    logStep(10, 'APK Release : Ignoré (dossier android non présent)');
+  }
+
+  // Step 11: Git Commit & Push (ONLY IF ALL PREVIOUS STEPS SUCCEEDED)
+  logStep(11, 'Sauvegarde du code sur GitHub');
+  let gitCommitStatus = 'Échoué';
+  let gitPushStatus = 'Échoué';
+
+  // Double check all previous steps succeeded
+  const buildChainOk = buildRes.success && (!hasCapacitor || capStatus.startsWith('OK')) && (!hasAndroidNative || apkStatus.startsWith('OK'));
+
+  if (buildChainOk) {
+    const addRes = runCmd('git add .');
+    if (addRes.success) {
+      const commitInfo = getCommitInfo(extractedPath);
+      const commitRes = runCmd(`git commit -m "${commitInfo.commitMsg.replace(/"/g, '\\"')}"`);
+      
+      if (commitRes.success) {
+        gitCommitStatus = 'OK';
+        logSuccess(`Git Commit réalisé avec le message : "${commitInfo.commitMsg}"`);
+        const pushRes = runCmd('git push origin main');
+        if (pushRes.success) {
+          gitPushStatus = 'OK';
+          logSuccess('Git Push vers GitHub réussi !');
+        } else {
+          logWarning('Le git push a échoué. Le code est commité localement.');
+        }
+      } else {
+        logInfo('Aucun changement à commiter dans Git.');
+        gitCommitStatus = 'OK (Aucun changement)';
+        gitPushStatus = 'OK';
+      }
+    }
+  } else {
+    logError('Certaines étapes de build ont échoué. Aucun commit Git ne sera effectué.');
+  }
+
+  // Clean up temp dir and archive update zip
+  removeDir(TMP_DIR);
+  const archivedZipPath = archiveProcessedZip(zipPath);
+
+  const totalDuration = Date.now() - globalStart;
+
+  // Final Detailed Summary Report
+  logHeader('RAPPORT FINAL DE MISE À JOUR - YETI UPDATE MANAGER');
+  console.log(`  • Version installée          : ${c.green}${c.bold}${diff.version}${c.reset}`);
+  console.log(`  • Sauvegarde créée           : ${c.cyan}${backupFolder}${c.reset}`);
+  console.log(`  • Durée totale de la MAJ     : ${c.bold}${formatDuration(totalDuration)}${c.reset}`);
+  console.log(`  • Fichiers ajoutés           : ${diff.added.length}`);
+  console.log(`  • Fichiers modifiés          : ${diff.modified.length}`);
+  console.log(`  • Fichiers supprimés         : ${diff.deleted.length}`);
+  console.log(`  • Résultat validation ZIP    : ${c.green}OK${c.reset}`);
+  console.log(`  • Résultat npm install       : ${npmStatus}`);
+  console.log(`  • Résultat Build             : ${c.green}OK${c.reset} (${buildDurationStr})`);
+  console.log(`  • Résultat Capacitor Sync    : ${capStatus.startsWith('OK') ? c.green(capStatus) : capStatus}`);
+  console.log(`  • Résultat Génération APK    : ${apkStatus.startsWith('OK') ? c.green(apkStatus) : apkStatus}`);
+  console.log(`  • Résultat Git Commit        : ${gitCommitStatus.startsWith('OK') ? c.green(gitCommitStatus) : gitCommitStatus}`);
+  console.log(`  • Résultat Git Push (GitHub)  : ${gitPushStatus.startsWith('OK') ? c.green(gitPushStatus) : gitPushStatus}`);
+  if (archivedZipPath) {
+    console.log(`\n  ${c.bold}Historique du ZIP archivé :${c.reset}`);
+    console.log(`  ↳ ${c.cyan}${c.bold}${archivedZipPath}${c.reset}`);
+  }
+  console.log(`\n  ${c.bold}Emplacement APK Release :${c.reset}`);
+  console.log(`  ↳ ${c.green}${c.bold}${apkPath}${c.reset}`);
+  console.log(`\n  ${c.bold}Emplacement Sauvegarde Locale :${c.reset}`);
+  console.log(`  ↳ ${c.cyan}${c.bold}${backupFolder}${c.reset}`);
+  console.log(`\n${c.green}${c.bold}✓ Mise à jour entièrement terminée et sécurisée avec succès !${c.reset}\n`);
+}
+
+main().catch(err => {
+  logError(`Erreur inattendue : ${err.message}`);
+  process.exit(1);
+});

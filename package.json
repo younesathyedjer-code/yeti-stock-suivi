@@ -9,16 +9,13 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "compare": "node tools/compare-projects.cjs"
+    "yeti-update": "node scripts/yeti-update-manager.cjs",
+    "yeti-rollback": "node scripts/yeti-update-manager.cjs --rollback"
   },
   "dependencies": {
-    "@capacitor/android": "^8.4.1",
-    "@capacitor/cli": "^8.4.1",
-    "@capacitor/core": "^8.4.1",
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
-    "adm-zip": "^0.5.18",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "firebase": "^12.14.0",
@@ -30,13 +27,21 @@
     "vite": "^6.2.3"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
+    "adm-zip": "^0.6.0",
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.25.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
-    "vite": "^6.2.3"
+    "vite": "^6.2.3",
+    "@capacitor/core": "^8.4.1",
+    "@capacitor/cli": "^8.4.1",
+    "@capacitor/android": "^8.4.1"
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-win32-x64-msvc": "^4.30.1"
   }
 }

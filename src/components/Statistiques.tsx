@@ -271,61 +271,70 @@ export default function Statistiques({ palettes, gammes, agents, currentUser }: 
 
   // Filter computation
   const filteredPalettes = useMemo(() => {
-    return palettes.filter(p => {
-      // 1. Operator filter (Force personal view if not Admin)
-      if (activeAgentFilter !== 'all' && p.agentId !== activeAgentFilter) {
-        return false;
-      }
+    return palettes
+      .map(p => {
+        if (perfumeFilter !== 'all') {
+          return {
+            ...p,
+            entries: p.entries.filter(e => e.perfume === perfumeFilter)
+          };
+        }
+        return p;
+      })
+      .filter(p => {
+        // 1. Operator filter (Force personal view if not Admin)
+        if (activeAgentFilter !== 'all' && p.agentId !== activeAgentFilter) {
+          return false;
+        }
 
-      // 2. Shift filter
-      if (shiftFilter !== 'all' && p.lastUpdatedShift !== shiftFilter) {
-        return false;
-      }
+        // 2. Shift filter
+        if (shiftFilter !== 'all' && p.lastUpdatedShift !== shiftFilter) {
+          return false;
+        }
 
-      // 3. Product line (Gamme) filter
-      if (gammeFilter !== 'all' && p.gammeId !== gammeFilter) {
-        return false;
-      }
+        // 3. Product line (Gamme) filter
+        if (gammeFilter !== 'all' && p.gammeId !== gammeFilter) {
+          return false;
+        }
 
-      // 4. Individual Perfume filter
-      if (perfumeFilter !== 'all') {
-        const hasPerfume = p.entries.some(e => e.perfume === perfumeFilter);
-        if (!hasPerfume) return false;
-      }
+        // 4. Individual Perfume filter
+        if (perfumeFilter !== 'all' && p.entries.length === 0) {
+          return false;
+        }
 
-      // 5. Date filter
-      if (dateFilter !== 'all') {
-        const pDate = new Date(p.createdAt);
-        const now = new Date();
-        if (dateFilter === 'today') {
-          return pDate.toDateString() === now.toDateString();
-        } else if (dateFilter === 'week') {
-          const diffTime = Math.abs(now.getTime() - pDate.getTime());
-          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-          return diffDays <= 7;
-        } else if (dateFilter === 'custom' && customDate) {
-          const year = pDate.getFullYear();
-          const month = String(pDate.getMonth() + 1).padStart(2, '0');
-          const day = String(pDate.getDate()).padStart(2, '0');
-          const pDateStr = `${year}-${month}-${day}`;
-          return pDateStr === customDate;
-        } else if (dateFilter === 'range') {
-          const year = pDate.getFullYear();
-          const month = String(pDate.getMonth() + 1).padStart(2, '0');
-          const day = String(pDate.getDate()).padStart(2, '0');
-          const pDateStr = `${year}-${month}-${day}`;
-          if (startDate && endDate) {
-            return pDateStr >= startDate && pDateStr <= endDate;
-          } else if (startDate) {
-            return pDateStr >= startDate;
-          } else if (endDate) {
-            return pDateStr <= endDate;
+        // 5. Date filter
+        if (dateFilter !== 'all') {
+          const pDate = new Date(p.createdAt);
+          const now = new Date();
+          if (dateFilter === 'today') {
+            return pDate.toDateString() === now.toDateString();
+          } else if (dateFilter === 'week') {
+            const diffTime = Math.abs(now.getTime() - pDate.getTime());
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            return diffDays <= 7;
+          } else if (dateFilter === 'custom' && customDate) {
+            const year = pDate.getFullYear();
+            const month = String(pDate.getMonth() + 1).padStart(2, '0');
+            const day = String(pDate.getDate()).padStart(2, '0');
+            const pDateStr = `${year}-${month}-${day}`;
+            return pDateStr === customDate;
+          } else if (dateFilter === 'range') {
+            const year = pDate.getFullYear();
+            const month = String(pDate.getMonth() + 1).padStart(2, '0');
+            const day = String(pDate.getDate()).padStart(2, '0');
+            const pDateStr = `${year}-${month}-${day}`;
+            if (startDate && endDate) {
+              return pDateStr >= startDate && pDateStr <= endDate;
+            } else if (startDate) {
+              return pDateStr >= startDate;
+            } else if (endDate) {
+              return pDateStr <= endDate;
+            }
           }
         }
-      }
 
-      return true;
-    });
+        return true;
+      });
   }, [palettes, activeAgentFilter, shiftFilter, gammeFilter, perfumeFilter, dateFilter, customDate, startDate, endDate]);
 
   // Key stats calculations

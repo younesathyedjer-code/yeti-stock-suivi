@@ -7,7 +7,11 @@ coverage/
 .env*
 !.env.example
 
-# Yeti Update Manager
+# Yeti Update Manager exclusions
 .yeti_backups/
-updates/*
-!updates/.gitkeep
+.yeti_tmp/
+updates/
+android/app/build/
+android/build/
+android/.gradle/
+*.apk

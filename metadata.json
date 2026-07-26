@@ -1,6 +1,6 @@
 {
-  "name": "Yeti Update Manager",
-  "description": "An interactive high-fidelity development dashboard and automated deployment manager for Yeti Stock applications, complete with automatic builds, git push, Capacitor sync, APK releases, and Firebase deployment orchestration.",
+  "name": "Gestion de Palettes de Parfums",
+  "description": "Application professionnelle de gestion de production, d’inventaire et d’étiquetage de palettes de parfums.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
