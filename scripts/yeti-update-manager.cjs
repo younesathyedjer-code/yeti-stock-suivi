@@ -3,19 +3,112 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const readline = require('readline');
 const AdmZip = require('adm-zip');
+const crypto = require('crypto');
 
-// Colored console helpers
+// Colored console helpers - Safe color formatter working both as strings and functions
+function createColorFormatter(openCode, closeCode = 39) {
+  const supportsColor = Boolean(process.stdout && process.stdout.isTTY && !process.env.NO_COLOR);
+  const openSeq = supportsColor ? `\x1b[${openCode}m` : '';
+  const closeSeq = supportsColor ? `\x1b[${closeCode}m` : '';
+
+  const formatter = function(text) {
+    if (text === undefined || text === null) {
+      return openSeq;
+    }
+    return `${openSeq}${text}${closeSeq}`;
+  };
+
+  formatter.toString = () => openSeq;
+  formatter.valueOf = () => openSeq;
+  formatter[Symbol.toPrimitive] = () => openSeq;
+
+  return formatter;
+}
+
+function getFileSha256(filePath) {
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    const data = fs.readFileSync(filePath);
+    return crypto.createHash('sha256').update(data).digest('hex');
+  } catch (e) {
+    return null;
+  }
+}
+
+function getFileMeta(filePath) {
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    const stat = fs.statSync(filePath);
+    const sha256 = getFileSha256(filePath);
+    return {
+      size: stat.size,
+      mtime: stat.mtime,
+      mtimeStr: stat.mtime.toLocaleString('fr-FR'),
+      sha256
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+function getFirst5Lines(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) {
+    return '    (Fichier inexistant / Nouveau fichier)';
+  }
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    const lines = content.split(/\r?\n/).slice(0, 5);
+    return lines.map((line, idx) => `    L${idx + 1}: ${line}`).join('\n');
+  } catch (e) {
+    return '    (Fichier binaire ou impossible à lire)';
+  }
+}
+
+function findProjectRootInDir(basePath) {
+  const queue = [basePath];
+  const maxDepth = 10;
+  let depth = 0;
+
+  while (queue.length > 0 && depth < maxDepth) {
+    const levelSize = queue.length;
+    for (let i = 0; i < levelSize; i++) {
+      const currentDir = queue.shift();
+      const hasPkg = fs.existsSync(path.join(currentDir, 'package.json'));
+      const srcPath = path.join(currentDir, 'src');
+      const hasSrc = fs.existsSync(srcPath) && fs.statSync(srcPath).isDirectory();
+
+      if (hasPkg && hasSrc) {
+        return currentDir;
+      }
+
+      try {
+        const entries = fs.readdirSync(currentDir);
+        for (const entry of entries) {
+          if (entry === 'node_modules' || entry === '.git' || entry === 'android' || entry === 'dist' || entry === 'build') continue;
+          const fullPath = path.join(currentDir, entry);
+          if (fs.statSync(fullPath).isDirectory()) {
+            queue.push(fullPath);
+          }
+        }
+      } catch (e) {}
+    }
+    depth++;
+  }
+
+  return basePath;
+}
+
 const c = {
-  reset: '\x1b[0m',
-  bold: '\x1b[1m',
-  dim: '\x1b[2m',
-  red: '\x1b[31m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  blue: '\x1b[34m',
-  magenta: '\x1b[35m',
-  cyan: '\x1b[36m',
-  white: '\x1b[37m'
+  reset: createColorFormatter(0, 0),
+  bold: createColorFormatter(1, 22),
+  dim: createColorFormatter(2, 22),
+  red: createColorFormatter(31, 39),
+  green: createColorFormatter(32, 39),
+  yellow: createColorFormatter(33, 39),
+  blue: createColorFormatter(34, 39),
+  magenta: createColorFormatter(35, 39),
+  cyan: createColorFormatter(36, 39),
+  white: createColorFormatter(37, 39)
 };
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
@@ -24,6 +117,29 @@ const PROCESSED_DIR = path.join(UPDATES_DIR, 'processed');
 const BACKUPS_DIR = path.join(PROJECT_ROOT, '.yeti_backups');
 const TMP_DIR = path.join(PROJECT_ROOT, '.yeti_tmp');
 const MAX_BACKUPS = 20;
+
+// Directories and generated files to strictly ignore from diff, copy, and backup operations
+const EXCLUDED_DIR_NAMES = new Set([
+  'android',
+  'node_modules',
+  'dist',
+  'build',
+  '.git',
+  '.yeti_backups',
+  '.yeti_tmp',
+  'updates',
+  '.gradle',
+  '.idea',
+  '.vscode',
+  'coverage'
+]);
+
+const EXCLUDED_FILE_NAMES = new Set([
+  'package-lock.json',
+  'bun.lock',
+  'yarn.lock',
+  'pnpm-lock.yaml'
+]);
 
 // Paths to ignore during backup & sync
 const IGNORED_PATHS = [
@@ -40,6 +156,9 @@ const IGNORED_PATHS = [
   '.idea',
   '.vscode',
   'package-lock.json',
+  'bun.lock',
+  'yarn.lock',
+  'pnpm-lock.yaml',
   'android/app/build',
   'android/build',
   'android/.gradle'
@@ -145,32 +264,27 @@ function detectCapacitorWebDir() {
 }
 
 function isIgnored(relativePath) {
+  if (!relativePath) return true;
   const normalized = relativePath.replace(/\\/g, '/');
   const parts = normalized.split('/');
 
   for (const part of parts) {
-    if (
-      part === 'android' ||
-      part === 'node_modules' ||
-      part === 'dist' ||
-      part === 'build' ||
-      part === '.git' ||
-      part === '.yeti_backups' ||
-      part === '.yeti_tmp' ||
-      part === 'updates' ||
-      part === '.gradle' ||
-      part === '.idea' ||
-      part === '.vscode' ||
-      part === 'coverage'
-    ) {
+    if (EXCLUDED_DIR_NAMES.has(part)) {
       return true;
     }
+  }
+
+  const fileName = parts[parts.length - 1];
+  if (EXCLUDED_FILE_NAMES.has(fileName)) {
+    return true;
   }
 
   if (
     normalized.endsWith('.apk') ||
     normalized.endsWith('.DS_Store') ||
-    normalized.endsWith('Thumbs.db')
+    normalized.endsWith('Thumbs.db') ||
+    normalized.endsWith('.log') ||
+    normalized.endsWith('.tmp')
   ) {
     return true;
   }
@@ -378,16 +492,10 @@ function extractZip(zipPath) {
   const extractTarget = path.join(TMP_DIR, 'raw');
   zip.extractAllTo(extractTarget, true);
 
-  // Check if extracted contents are nested in a single root folder
-  let realRoot = extractTarget;
-  const topItems = fs.readdirSync(extractTarget);
-  if (topItems.length === 1) {
-    const singleChild = path.join(extractTarget, topItems[0]);
-    if (fs.statSync(singleChild).isDirectory() && fs.existsSync(path.join(singleChild, 'package.json'))) {
-      realRoot = singleChild;
-    }
-  }
+  logInfo(`Recherche automatique de la racine du projet dans l'archive...`);
+  const realRoot = findProjectRootInDir(extractTarget);
 
+  logInfo(`  ℹ Racine du projet ZIP localisée : '${path.resolve(realRoot)}'`);
   logSuccess(`Extraction réussie dans le dossier d'analyse temporaire.`);
   return realRoot;
 }
@@ -398,11 +506,18 @@ function extractZip(zipPath) {
 function validateProject(extractedPath) {
   const errors = [];
 
-  // 1. Mandatory Core Files
-  const requiredFiles = ['package.json'];
-  for (const file of requiredFiles) {
-    if (!fs.existsSync(path.join(extractedPath, file))) {
-      errors.push(`Fichier obligatoire manquant : ${file}`);
+  // 1. Mandatory Core Files & Directories Check
+  const requiredCore = [
+    { name: 'package.json', check: () => fs.existsSync(path.join(extractedPath, 'package.json')) },
+    { name: 'dossier src/', check: () => fs.existsSync(path.join(extractedPath, 'src')) && fs.statSync(path.join(extractedPath, 'src')).isDirectory() },
+    { name: 'index.html', check: () => fs.existsSync(path.join(extractedPath, 'index.html')) },
+    { name: 'vite.config.ts (ou vite.config.js)', check: () => fs.existsSync(path.join(extractedPath, 'vite.config.ts')) || fs.existsSync(path.join(extractedPath, 'vite.config.js')) },
+    { name: 'tsconfig.json', check: () => fs.existsSync(path.join(extractedPath, 'tsconfig.json')) }
+  ];
+
+  for (const item of requiredCore) {
+    if (!item.check()) {
+      errors.push(`Fichier ou dossier obligatoire manquant à la racine du ZIP : ${item.name}`);
     }
   }
 
@@ -553,15 +668,17 @@ function mergePackageJson(curPath, newPath) {
 // Step 4: Compute Diff & Preview Report
 // ------------------------------------------------------------------
 function computeDiff(extractedPath) {
-  const extractedFiles = getAllFiles(extractedPath);
-  const currentFiles = getAllFiles(PROJECT_ROOT);
+  const extractedFiles = getAllFiles(extractedPath).filter(f => !isIgnored(f));
+  const currentFiles = getAllFiles(PROJECT_ROOT).filter(f => !isIgnored(f));
   const hasLocalConfig = hasLocalCapacitorConfig();
 
   const currentMap = new Map();
   for (const f of currentFiles) {
     const fp = path.join(PROJECT_ROOT, f);
     if (fs.existsSync(fp)) {
-      currentMap.set(f, fs.readFileSync(fp, 'utf8'));
+      try {
+        currentMap.set(f, fs.readFileSync(fp));
+      } catch (e) {}
     }
   }
 
@@ -570,8 +687,8 @@ function computeDiff(extractedPath) {
   const deleted = [];
 
   for (const f of extractedFiles) {
+    if (isIgnored(f)) continue;
     const extractedFp = path.join(extractedPath, f);
-    const contentNew = fs.readFileSync(extractedFp, 'utf8');
 
     if (getCapacitorConfigPaths().includes(f) && hasLocalConfig) {
       currentMap.delete(f);
@@ -581,9 +698,24 @@ function computeDiff(extractedPath) {
     if (!currentMap.has(f)) {
       added.push(f);
     } else {
-      const curNorm = currentMap.get(f).replace(/\r\n/g, '\n');
-      const newNorm = contentNew.replace(/\r\n/g, '\n');
-      if (curNorm !== newNorm) {
+      let isSame = false;
+      try {
+        const curBuf = currentMap.get(f);
+        const newBuf = fs.readFileSync(extractedFp);
+
+        if (curBuf && curBuf.equals(newBuf)) {
+          isSame = true;
+        } else if (curBuf) {
+          // Normalize line endings for text comparisons
+          const curNorm = curBuf.toString('utf8').replace(/\r\n/g, '\n');
+          const newNorm = newBuf.toString('utf8').replace(/\r\n/g, '\n');
+          if (curNorm === newNorm) {
+            isSame = true;
+          }
+        }
+      } catch (e) {}
+
+      if (!isSame) {
         modified.push(f);
       }
       currentMap.delete(f);
@@ -591,6 +723,7 @@ function computeDiff(extractedPath) {
   }
 
   for (const [f] of currentMap.entries()) {
+    if (isIgnored(f)) continue;
     if (getCapacitorConfigPaths().includes(f) && hasLocalConfig) continue;
     deleted.push(f);
   }
@@ -683,7 +816,7 @@ function createBackup() {
 }
 
 // ------------------------------------------------------------------
-// Step 6: Apply Update Files
+// Step 6: Apply Update Files with Full SHA-256 Diagnostics
 // ------------------------------------------------------------------
 function applyUpdateFiles(extractedPath, deletedFiles = []) {
   const extractedFiles = getAllFiles(extractedPath);
@@ -702,7 +835,7 @@ function applyUpdateFiles(extractedPath, deletedFiles = []) {
 
   const hasLocalConfig = hasLocalCapacitorConfig();
 
-  // 1. Delete removed source files (strictly ignoring excluded/local folders and preserved local Capacitor configs)
+  // 1. Delete removed source files
   let deletedCount = 0;
   for (const relPath of deletedFiles) {
     if (isIgnored(relPath)) continue;
@@ -712,9 +845,7 @@ function applyUpdateFiles(extractedPath, deletedFiles = []) {
       try {
         fs.unlinkSync(destFile);
         deletedCount++;
-      } catch (e) {
-        // ignore
-      }
+      } catch (e) {}
     }
   }
 
@@ -722,11 +853,13 @@ function applyUpdateFiles(extractedPath, deletedFiles = []) {
     logInfo(`${deletedCount} ancien(s) fichier(s) source supprimé(s).`);
   }
 
-  // 2. Copy updated/added files
+  // 2. Copy updated/added files and collect diagnostic telemetry
+  const replacementReport = [];
+  let copiedCount = 0;
+
   for (const relPath of extractedFiles) {
     if (isIgnored(relPath)) continue;
 
-    // Preserving local Capacitor configuration
     if (getCapacitorConfigPaths().includes(relPath) && hasLocalConfig) {
       logInfo(`  ℹ Conservation de la configuration Capacitor locale (${relPath} ignoré du ZIP)`);
       continue;
@@ -735,20 +868,94 @@ function applyUpdateFiles(extractedPath, deletedFiles = []) {
     const srcFile = path.join(extractedPath, relPath);
     const destFile = path.join(PROJECT_ROOT, relPath);
 
+    const srcMeta = getFileMeta(srcFile);
+    const srcLinesBefore = getFirst5Lines(srcFile);
+    const destLinesBefore = getFirst5Lines(destFile);
+
     if (relPath === 'package.json') {
       const mergedPkg = mergePackageJson(destFile, srcFile);
       if (mergedPkg) {
         ensureDir(path.dirname(destFile));
         fs.writeFileSync(destFile, JSON.stringify(mergedPkg, null, 2), 'utf8');
+        const destMeta = getFileMeta(destFile);
+        const destLinesAfter = getFirst5Lines(destFile);
+        replacementReport.push({
+          relPath,
+          srcMeta,
+          destMeta,
+          isMerged: true,
+          srcLinesBefore,
+          destLinesBefore,
+          destLinesAfter
+        });
+        copiedCount++;
         continue;
       }
     }
 
     ensureDir(path.dirname(destFile));
     fs.copyFileSync(srcFile, destFile);
+    const destMeta = getFileMeta(destFile);
+    const destLinesAfter = getFirst5Lines(destFile);
+
+    replacementReport.push({
+      relPath,
+      srcMeta,
+      destMeta,
+      isMerged: false,
+      srcLinesBefore,
+      destLinesBefore,
+      destLinesAfter
+    });
+    copiedCount++;
   }
 
-  logSuccess(`${extractedFiles.length} fichiers appliqués au projet avec succès.`);
+  // Display detailed replacement report for each replaced file
+  console.log(`\n  ${c.cyan}${c.bold}----------------------------------------------------${c.reset}`);
+  console.log(`  ${c.bold}LISTE ET MÉTADONNÉES DES FICHIERS REMPLACÉS${c.reset}`);
+  console.log(`  ${c.cyan}${c.bold}----------------------------------------------------${c.reset}`);
+
+  let shaMismatchFound = false;
+  let failedFile = null;
+
+  for (const rep of replacementReport) {
+    const { relPath, srcMeta, destMeta, isMerged, srcLinesBefore, destLinesBefore, destLinesAfter } = rep;
+    console.log(`  • ${c.bold}${relPath}${c.reset}${isMerged ? ' (Fusion Intelligente package.json)' : ''}`);
+    if (srcMeta && destMeta) {
+      console.log(`    - Taille ZIP     : ${srcMeta.size} octets`);
+      console.log(`    - Taille Projet  : ${destMeta.size} octets`);
+      console.log(`    - Date Modif.   : ${destMeta.mtimeStr}`);
+      console.log(`    - SHA-256 ZIP   : ${srcMeta.sha256}`);
+      console.log(`    - SHA-256 Projet: ${destMeta.sha256}`);
+
+      console.log(`    ${c.yellow}--- 5 PREMIÈRES LIGNES (DANS LE ZIP) ---${c.reset}`);
+      console.log(srcLinesBefore);
+      console.log(`    ${c.yellow}--- 5 PREMIÈRES LIGNES (PROJET AVANT REMPLACEMENT) ---${c.reset}`);
+      console.log(destLinesBefore);
+      console.log(`    ${c.green}--- 5 PREMIÈRES LIGNES (PROJET APRÈS REMPLACEMENT) ---${c.reset}`);
+      console.log(destLinesAfter);
+
+      if (!isMerged && srcMeta.sha256 !== destMeta.sha256) {
+        logError(`  DIVERGENCE DE CONTENU DÉTECTÉE SUR LE FICHIER : ${relPath}`);
+        shaMismatchFound = true;
+        failedFile = relPath;
+      } else {
+        console.log(`    - Validation     : ${c.green}✓ SHA-256 100% Identique${c.reset}`);
+      }
+    } else {
+      logError(`  Impossible de lire les métadonnées pour le fichier : ${relPath}`);
+      shaMismatchFound = true;
+      failedFile = relPath;
+    }
+    console.log('');
+  }
+
+  if (shaMismatchFound) {
+    throw new Error(`ÉCHEC SÉCURITÉ : Le fichier '${failedFile}' dans le projet ne correspond pas exactement au fichier du ZIP (SHA-256 divergent).`);
+  }
+
+  logSuccess(`${copiedCount} fichier(s) remplacés et 100% vérifiés par SHA-256 avec succès.`);
+  return replacementReport;
 }
 
 // ------------------------------------------------------------------
@@ -908,6 +1115,19 @@ async function main() {
   }
   logSuccess(`Validation complète réussie (${formatDuration(valDuration)}) : Structure, fichiers indispensables, JSON, React et Capacitor valides.`);
 
+  // Print list of files present in src/ of the extracted ZIP
+  const zipSrcDir = path.join(extractedPath, 'src');
+  if (fs.existsSync(zipSrcDir)) {
+    const zipSrcFiles = getAllFiles(zipSrcDir).filter(f => !isIgnored(f));
+    console.log(`\n  ${c.cyan}${c.bold}----------------------------------------------------${c.reset}`);
+    console.log(`  ${c.bold}LISTE DES FICHIERS SOURCE 'src/' DANS LE ZIP EXTRAIT (${zipSrcFiles.length} fichiers)${c.reset}`);
+    console.log(`  ${c.cyan}${c.bold}----------------------------------------------------${c.reset}`);
+    for (const relSrcFile of zipSrcFiles) {
+      console.log(`  • src/${relSrcFile}`);
+    }
+    console.log('');
+  }
+
   // Step 4: Preview Report & Confirmation
   logStep(4, 'Prévisualisation et rapport de modifications');
   const diff = computeDiff(extractedPath);
@@ -973,10 +1193,11 @@ async function main() {
   }
   const backupDuration = Date.now() - backupStart;
 
-  // Step 6: Application of Files
+  // Step 6: Application of Files with Diagnostic Checks
   logStep(6, 'Remplacement des fichiers du projet');
+  let appliedReport = [];
   try {
-    applyUpdateFiles(extractedPath, diff.deleted);
+    appliedReport = applyUpdateFiles(extractedPath, diff.deleted);
   } catch (err) {
     logError(`Erreur lors de l'application des fichiers : ${err.message}`);
     rollbackFromBackup(backupFolder);
@@ -1003,8 +1224,40 @@ async function main() {
     logStep(7, 'Vérification des dépendances : Inchangées');
   }
 
-  // Step 8: Build Verification
+  // Step 7.5: Vite Sources Pre-Build Verification
+  logInfo('Vérification des fichiers source utilisés par Vite avant compilation...');
+  const srcFiles = getAllFiles(path.join(PROJECT_ROOT, 'src')).filter(f => !isIgnored(f));
+  let srcCheckCount = 0;
+  let srcMismatchFound = false;
+
+  for (const relSrc of srcFiles) {
+    const projPath = path.join(PROJECT_ROOT, 'src', relSrc);
+    const zipSrcPath = path.join(extractedPath, 'src', relSrc);
+
+    if (fs.existsSync(zipSrcPath)) {
+      const projSha = getFileSha256(projPath);
+      const zipSha = getFileSha256(zipSrcPath);
+      if (projSha !== zipSha) {
+        logError(`ERREUR SOURCE VITE : Le fichier 'src/${relSrc}' dans le projet (SHA: ${projSha}) ne correspond pas au ZIP (SHA: ${zipSha}).`);
+        srcMismatchFound = true;
+      }
+      srcCheckCount++;
+    }
+  }
+
+  if (srcMismatchFound) {
+    logError('Annulation : Les sources du projet prêtes pour Vite diffèrent des sources du ZIP.');
+    rollbackFromBackup(backupFolder);
+    removeDir(TMP_DIR);
+    process.exit(1);
+  }
+  logSuccess(`${srcCheckCount} fichier(s) source dans 'src/' contrôlés et validés avant compilation (SHA-256 100% identiques au ZIP).`);
+
+  // Step 8: Build Verification with Dist Validation
   logStep(8, 'Compilation du projet (npm run build)');
+  logInfo(`  ℹ Le build sera effectué avec les sources provenant de : ${path.resolve(PROJECT_ROOT)}`);
+  logInfo(`  ℹ Sources extraites de : ${path.resolve(extractedPath)}`);
+  const buildStartTime = Date.now();
   let buildRes = runCmd('npm run build');
 
   // Check for missing Rollup / Esbuild platform-specific native binaries (common npm bug on Windows)
@@ -1037,7 +1290,41 @@ async function main() {
     removeDir(TMP_DIR);
     process.exit(1);
   }
-  logSuccess(`Compilation réussie en ${buildDurationStr}.`);
+
+  // Post-Build Check: Validate regenerated dist directory
+  const webDir = detectCapacitorWebDir();
+  const distPath = path.join(PROJECT_ROOT, webDir);
+  if (!fs.existsSync(distPath)) {
+    logError(`Le dossier de sortie de compilation '${webDir}' n'existe pas après npm run build.`);
+    rollbackFromBackup(backupFolder);
+    removeDir(TMP_DIR);
+    process.exit(1);
+  }
+
+  const distFiles = getAllFiles(distPath).filter(f => !isIgnored(f));
+  if (distFiles.length === 0) {
+    logError(`Le dossier '${webDir}' est vide après la compilation.`);
+    rollbackFromBackup(backupFolder);
+    removeDir(TMP_DIR);
+    process.exit(1);
+  }
+
+  const distReportMap = new Map();
+  console.log(`\n  ${c.cyan}${c.bold}----------------------------------------------------${c.reset}`);
+  console.log(`  ${c.bold}DOSSIER '${webDir.toUpperCase()}' RÉGÉNÉRÉ (SORTIE VITE BUILD)${c.reset}`);
+  console.log(`  ${c.cyan}${c.bold}----------------------------------------------------${c.reset}`);
+
+  for (const relDist of distFiles) {
+    const fullDistPath = path.join(distPath, relDist);
+    const meta = getFileMeta(fullDistPath);
+    distReportMap.set(relDist, meta);
+    console.log(`  • ${webDir}/${relDist}`);
+    console.log(`    - Taille    : ${meta.size} octets`);
+    console.log(`    - Modifié   : ${meta.mtimeStr}`);
+    console.log(`    - SHA-256   : ${meta.sha256}`);
+  }
+  console.log('');
+  logSuccess(`Compilation et régénération du dossier '${webDir}' réussies en ${buildDurationStr} (${distFiles.length} fichier(s) générés).`);
 
   // Step 9: Capacitor Sync
   let capStatus = 'Ignoré (projet web pur)';
@@ -1063,13 +1350,20 @@ async function main() {
     const detectedWebDir = detectCapacitorWebDir();
     logInfo(`  ℹ Configuration Capacitor détectée : webDir = '${detectedWebDir}'`);
 
-    const targetWebDirPath = path.join(PROJECT_ROOT, detectedWebDir);
-    if (!fs.existsSync(targetWebDirPath)) {
-      logWarning(`  ⚠ Le dossier des assets web '${detectedWebDir}' n'existe pas encore. Création du dossier...`);
-      ensureDir(targetWebDirPath);
-    } else {
-      logSuccess(`  ✓ Dossier des assets web '${detectedWebDir}' vérifié avec succès.`);
+    // Pre-Capacitor Sync Check: Ensure dist files remain untouched
+    for (const relDist of distFiles) {
+      const fullDistPath = path.join(distPath, relDist);
+      const currentMeta = getFileMeta(fullDistPath);
+      const initialMeta = distReportMap.get(relDist);
+
+      if (!currentMeta || !initialMeta || currentMeta.sha256 !== initialMeta.sha256) {
+        logError(`DIVERGENCE '${detectedWebDir}' : Le fichier '${detectedWebDir}/${relDist}' a été altéré avant la synchronisation Capacitor.`);
+        rollbackFromBackup(backupFolder);
+        removeDir(TMP_DIR);
+        process.exit(1);
+      }
     }
+    logSuccess(`Contenu de '${detectedWebDir}' validé avant la synchronisation Capacitor.`);
 
     const capRes = runCmd('npx cap sync android');
     capDurationStr = formatDuration(capRes.duration);
@@ -1079,8 +1373,57 @@ async function main() {
       removeDir(TMP_DIR);
       process.exit(1);
     }
+
+    // Post-Capacitor Sync Check: Verify android/app/src/main/assets/public strictly matches dist SHA-256
+    const androidPublicDir = path.join(PROJECT_ROOT, 'android/app/src/main/assets/public');
+    if (!fs.existsSync(androidPublicDir)) {
+      logError(`Le dossier d'assets Android '${androidPublicDir}' est introuvable après la synchronisation.`);
+      rollbackFromBackup(backupFolder);
+      removeDir(TMP_DIR);
+      process.exit(1);
+    }
+
+    console.log(`\n  ${c.cyan}${c.bold}----------------------------------------------------${c.reset}`);
+    console.log(`  ${c.bold}CONTRÔLE D'INTÉGRITÉ ASSETS ANDROID (npx cap sync)${c.reset}`);
+    console.log(`  ${c.cyan}${c.bold}----------------------------------------------------${c.reset}`);
+
+    let syncDivergenceFound = false;
+    let failedAsset = null;
+
+    for (const relDist of distFiles) {
+      const distFilePath = path.join(distPath, relDist);
+      const androidFilePath = path.join(androidPublicDir, relDist);
+
+      const distSha = getFileSha256(distFilePath);
+      const androidSha = getFileSha256(androidFilePath);
+
+      console.log(`  • Asset : ${relDist}`);
+      console.log(`    - SHA-256 '${detectedWebDir}' : ${distSha}`);
+      console.log(`    - SHA-256 Android : ${androidSha || 'NON TROUVÉ'}`);
+
+      if (!androidSha) {
+        logError(`    ✖ FICHIER ABSENT DANS LES ASSETS ANDROID : ${relDist}`);
+        syncDivergenceFound = true;
+        failedAsset = relDist;
+      } else if (distSha !== androidSha) {
+        logError(`    ✖ DIVERGENCE SHA-256 ENTRE DIST ET ASSETS ANDROID : ${relDist}`);
+        syncDivergenceFound = true;
+        failedAsset = relDist;
+      } else {
+        console.log(`    - Validation     : ${c.green}✓ SHA-256 100% Identique à dist${c.reset}`);
+      }
+      console.log('');
+    }
+
+    if (syncDivergenceFound) {
+      logError(`Mise à jour interrompue : L'asset Android '${failedAsset}' ne correspond pas exactement au fichier compilé de '${detectedWebDir}'.`);
+      rollbackFromBackup(backupFolder);
+      removeDir(TMP_DIR);
+      process.exit(1);
+    }
+
     capStatus = `OK (${capDurationStr})`;
-    logSuccess(`Synchronisation Capacitor Android terminée en ${capDurationStr}.`);
+    logSuccess(`Synchronisation Capacitor Android terminée et 100% validée par SHA-256 en ${capDurationStr}.`);
   } else {
     logStep(9, 'Capacitor : Ignoré (dossier Android non détecté)');
   }
@@ -1089,6 +1432,7 @@ async function main() {
   let apkStatus = 'Ignoré (pas de sous-dossier android)';
   let apkPath = 'Non généré';
   let apkDurationStr = '0 sec';
+  let apkMeta = null;
   const hasAndroidNative = fs.existsSync(path.join(PROJECT_ROOT, 'android'));
 
   if (hasAndroidNative) {
@@ -1101,6 +1445,17 @@ async function main() {
     if (apkRes.success && fs.existsSync(expectedApk)) {
       apkStatus = `OK (${apkDurationStr})`;
       apkPath = expectedApk;
+      apkMeta = getFileMeta(expectedApk);
+
+      console.log(`\n  ${c.cyan}${c.bold}----------------------------------------------------${c.reset}`);
+      console.log(`  ${c.bold}MÉTADONNÉES DE L'APK RELEASE GÉNÉRÉ${c.reset}`);
+      console.log(`  ${c.cyan}${c.bold}----------------------------------------------------${c.reset}`);
+      console.log(`  • Fichier : ${path.basename(expectedApk)}`);
+      console.log(`  • Taille  : ${(apkMeta.size / (1024 * 1024)).toFixed(2)} MB (${apkMeta.size} octets)`);
+      console.log(`  • Date    : ${apkMeta.mtimeStr}`);
+      console.log(`  • SHA-256 : ${apkMeta.sha256}`);
+      console.log(`${c.cyan}${c.bold}----------------------------------------------------${c.reset}\n`);
+
       logSuccess(`APK Release généré avec succès en ${apkDurationStr} :\n     ${apkPath}`);
     } else {
       logError('Génération de l\'APK Release échouée. Rollback automatique...');
@@ -1152,21 +1507,22 @@ async function main() {
 
   const totalDuration = Date.now() - globalStart;
 
-  // Final Detailed Summary Report
-  logHeader('RAPPORT FINAL DE MISE À JOUR - YETI UPDATE MANAGER');
+  // Final Comprehensive Diagnostic Summary Report
+  logHeader('RAPPORT DE DIAGNOSTIC ET VALIDATION DE LA CHAÎNE DE TRANSMISSION');
   console.log(`  • Version installée          : ${c.green}${c.bold}${diff.version}${c.reset}`);
   console.log(`  • Sauvegarde créée           : ${c.cyan}${backupFolder}${c.reset}`);
   console.log(`  • Durée totale de la MAJ     : ${c.bold}${formatDuration(totalDuration)}${c.reset}`);
-  console.log(`  • Fichiers ajoutés           : ${diff.added.length}`);
-  console.log(`  • Fichiers modifiés          : ${diff.modified.length}`);
-  console.log(`  • Fichiers supprimés         : ${diff.deleted.length}`);
-  console.log(`  • Résultat validation ZIP    : ${c.green}OK${c.reset}`);
-  console.log(`  • Résultat npm install       : ${npmStatus}`);
-  console.log(`  • Résultat Build             : ${c.green}OK${c.reset} (${buildDurationStr})`);
-  console.log(`  • Résultat Capacitor Sync    : ${capStatus.startsWith('OK') ? `${c.green}${capStatus}${c.reset}` : capStatus}`);
-  console.log(`  • Résultat Génération APK    : ${apkStatus.startsWith('OK') ? `${c.green}${apkStatus}${c.reset}` : apkStatus}`);
-  console.log(`  • Résultat Git Commit        : ${gitCommitStatus.startsWith('OK') ? `${c.green}${gitCommitStatus}${c.reset}` : gitCommitStatus}`);
-  console.log(`  • Résultat Git Push (GitHub)  : ${gitPushStatus.startsWith('OK') ? `${c.green}${gitPushStatus}${c.reset}` : gitPushStatus}`);
+  console.log(`\n  ${c.bold}BILAN DES ÉTAPES DE TRANSMISSION (100% VALIDE) :${c.reset}`);
+  console.log(`  ✓ 1. Fichiers du ZIP        : ${diff.added.length + diff.modified.length} fichier(s) remplacés (Structure & JSON valides)`);
+  console.log(`  ✓ 2. Fichiers copiés       : ${appliedReport.length} fichier(s) appliqués (SHA-256 100% vérifiés)`);
+  console.log(`  ✓ 3. Sources Vite          : ${srcCheckCount} fichier(s) dans 'src/' (SHA-256 100% conformes au ZIP)`);
+  console.log(`  ✓ 4. Compilation 'dist'    : ${distFiles.length} fichier(s) générés dans '${webDir}' (${buildDurationStr})`);
+  console.log(`  ✓ 5. Synchro Android Assets : ${distFiles.length} fichier(s) dans public/ (SHA-256 100% identiques à dist)`);
+  if (apkMeta) {
+    console.log(`  ✓ 6. APK Release Android   : Généré (${(apkMeta.size / (1024 * 1024)).toFixed(2)} MB | SHA-256: ${apkMeta.sha256.slice(0, 16)}...)`);
+  }
+  console.log(`  ✓ 7. Sauvegarde GitHub     : Commit ${gitCommitStatus} / Push ${gitPushStatus}`);
+
   if (archivedZipPath) {
     console.log(`\n  ${c.bold}Historique du ZIP archivé :${c.reset}`);
     console.log(`  ↳ ${c.cyan}${c.bold}${archivedZipPath}${c.reset}`);

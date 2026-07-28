@@ -111,14 +111,16 @@ Les fichiers ZIP de mise à jour ne sont plus jamais supprimés après installat
 
 ---
 
-### 5. Exclusion Permanente des Dossiers Locaux & Protections Sécurité
-- **Dossiers Exclus Permanents :** Les dossiers locaux essentiels suivants ne sont jamais supprimés ni remplacés lors d'une mise à jour :
-  - `android/` (configuration et code natif Android/APK)
+### 5. Exclusion Permanente des Dossiers Locaux, Fichiers Générés & Protections Sécurité
+- **Dossiers & Fichiers Exclus Permanents :** Les dossiers et fichiers générés suivants sont strictement exclus du calcul des différences (`diff`), de la prévisualisation, du remplacement de fichiers et des sauvegardes :
   - `node_modules/` (dépendances installées)
   - `dist/` (build de production)
+  - `android/` et `android/build/` (configuration et code natif Android/APK)
   - `.yeti_backups/` (sauvegardes automatiques)
   - `.git/` (historique et configuration Git)
-- **Calcul de Diff Sécurisé :** Les fichiers contenus dans ces dossiers exclus ne sont jamais comptabilisés comme "supprimés" dans le rapport de prévisualisation.
+  - Fichiers temporaires et verrous : `.yeti_tmp`, `updates`, `build`, `.gradle`, `.idea`, `.vscode`, `coverage`, `package-lock.json`, `bun.lock`, `yarn.lock`, `pnpm-lock.yaml`, `*.apk`, `*.log`, `*.tmp`.
+- **Garantie Diff :** Ces éléments générés ou temporaires n'apparaîtront JAMAIS comme "supprimés", "ajoutés" ou "modifiés" dans le rapport de prévisualisation.
+- **Gestion Sécurisée des Couleurs Console :** Le gestionnaire utilise des formateurs de couleurs ANSI personnalisés et autonomes (fonctions colorisées avec fallback texte brut sans dépendance sur `chalk`), garantissant un fonctionnement fluide sur tous les terminaux (Windows CMD, PowerShell, Bash, Linux) même si `chalk` est absent ou incompatible.
 - **Protection Contre la Suppression Massive (>50 Fichiers) :** Si une mise à jour prévoit la suppression de plus de 50 fichiers source, le processus est automatiquement bloqué et nécessite une confirmation explicite (en tapant `CONFIRMER` ou `OUI`).
 
 ---
@@ -132,7 +134,34 @@ Les fichiers ZIP de mise à jour ne sont plus jamais supprimés après installat
 
 ---
 
-### 7. Système de Rollback (Sécurité Absolue)
+### 7. Mode de Diagnostic Complet & Chaîne d'Intégrité SHA-256 (Prouvée Sans Suppositions)
+Afin d'éliminer toute incertitude quant à la propagation des nouvelles fonctionnalités, Yeti Update Manager exécute des contrôles d'empreinte SHA-256, la détection dynamique de racine et des prévisualisations visuelles de lignes à chaque étape :
+1. **Détection Dynamique de Racine du Projet dans le ZIP :**
+   - Explore automatiquement et de façon récursive les sous-dossiers de l'archive ZIP pour localiser la véritable racine du projet (contenant `package.json`, `src/`, `index.html`, `vite.config.ts`, `tsconfig.json`), quelle que soit la profondeur d'imbrication (`projet/`, `sub/sub/`, etc.).
+   - Affiche le chemin absolu exact de la racine extraite et vérifie la présence de tous les fichiers indispensables.
+2. **Aperçu du Dossier `src/` Extrait :**
+   - Affiche la liste complète des fichiers sources contenus dans le dossier `src/` du ZIP extrait avant d'effectuer le moindre remplacement.
+3. **Prévisualisation Visuelle des 5 Premières Lignes (Avant vs Après) :**
+   - Pour chaque fichier remplacé (`App.tsx`, `main.tsx`, composants, hooks, etc.), le gestionnaire affiche :
+     - Les 5 premières lignes du fichier provenant du ZIP.
+     - Les 5 premières lignes du fichier dans le projet avant remplacement.
+     - Les 5 premières lignes du fichier dans le projet après remplacement.
+   - Affiche le hash SHA-256 (ZIP vs Projet) et bloque le processus si une seule empreinte diverge.
+4. **Contrôle des Sources Vite (Pré-Build) :**
+   - Avant de lancer `npm run build`, le gestionnaire vérifie que tous les fichiers du dossier `src/` du projet sont 100% conformes aux fichiers source du ZIP (comparaison SHA-256) et affiche explicitement le chemin absolu du projet utilisé par le build.
+5. **Validation de la Régénération de `dist` (Post-Build) :**
+   - Après `npm run build`, le gestionnaire vérifie que le dossier `dist` a réellement été régénéré (nouvelle date de modification, tailles et empreintes SHA-256 des bundles JS/CSS et fichiers HTML).
+6. **Validation de `dist` Avant `npx cap sync` :**
+   - S'assure que les fichiers de `dist` n'ont été altérés par aucun processus parasite avant la synchronisation native Android.
+7. **Vérification Strictement Identique des Assets Android (Post-Capacitor Sync) :**
+   - Après `npx cap sync android`, le gestionnaire compare chaque fichier de `dist/` avec sa copie dans `android/app/src/main/assets/public/`.
+   - **Garantie Totale :** Si un seul fichier dans `android/app/src/main/assets/public/` est manquant ou ne possède pas un SHA-256 100% identique à `dist`, la mise à jour s'arrête immédiatement et déclenche un rollback.
+8. **Métadonnées de l'APK Release :**
+   - Affiche le nom, la taille exacte (en octets et MB), la date de création et l'empreinte SHA-256 de l'APK Release généré (`app-release.apk`).
+
+---
+
+### 8. Système de Rollback (Sécurité Absolue)
 
 #### Rollback Automatique
 Si une erreur survient à **n'importe quelle étape de construction** (`npm install`, `npm run build`, `npx cap sync android`, ou génération APK), Yeti Update Manager :
