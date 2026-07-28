@@ -27,15 +27,19 @@ const MAX_BACKUPS = 20;
 
 // Paths to ignore during backup & sync
 const IGNORED_PATHS = [
-  '.git',
-  '.yeti_backups',
-  '.yeti_tmp',
-  'updates',
+  'android',
   'node_modules',
   'dist',
+  '.yeti_backups',
+  '.git',
+  '.yeti_tmp',
+  'updates',
   'build',
   'coverage',
   '.gradle',
+  '.idea',
+  '.vscode',
+  'package-lock.json',
   'android/app/build',
   'android/build',
   'android/.gradle'
@@ -89,10 +93,90 @@ function removeDir(dirPath) {
   }
 }
 
+// ------------------------------------------------------------------
+// Capacitor Helper & WebDir Detector
+// ------------------------------------------------------------------
+function getCapacitorConfigPaths() {
+  return [
+    'capacitor.config.ts',
+    'capacitor.config.json',
+    'capacitor.config.js',
+    'capacitor.config.mjs',
+    'capacitor.config.cjs'
+  ];
+}
+
+function hasLocalCapacitorConfig() {
+  return getCapacitorConfigPaths().some(p => fs.existsSync(path.join(PROJECT_ROOT, p)));
+}
+
+function detectCapacitorWebDir() {
+  // 1. Try capacitor.config.json
+  const jsonPath = path.join(PROJECT_ROOT, 'capacitor.config.json');
+  if (fs.existsSync(jsonPath)) {
+    try {
+      const cfg = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+      if (cfg && cfg.webDir) {
+        return cfg.webDir;
+      }
+    } catch (e) {}
+  }
+
+  // 2. Try capacitor.config.ts / .js / .mjs / .cjs
+  const textConfigs = ['capacitor.config.ts', 'capacitor.config.js', 'capacitor.config.mjs', 'capacitor.config.cjs'];
+  for (const cfgFile of textConfigs) {
+    const cfgPath = path.join(PROJECT_ROOT, cfgFile);
+    if (fs.existsSync(cfgPath)) {
+      try {
+        const content = fs.readFileSync(cfgPath, 'utf8');
+        const match = content.match(/webDir\s*:\s*['"`]([^'"`]+)['"`]/);
+        if (match && match[1]) {
+          return match[1];
+        }
+      } catch (e) {}
+    }
+  }
+
+  // 3. Fallback based on folder existence
+  if (fs.existsSync(path.join(PROJECT_ROOT, 'dist'))) {
+    return 'dist';
+  }
+  return 'www';
+}
+
 function isIgnored(relativePath) {
   const normalized = relativePath.replace(/\\/g, '/');
+  const parts = normalized.split('/');
+
+  for (const part of parts) {
+    if (
+      part === 'android' ||
+      part === 'node_modules' ||
+      part === 'dist' ||
+      part === 'build' ||
+      part === '.git' ||
+      part === '.yeti_backups' ||
+      part === '.yeti_tmp' ||
+      part === 'updates' ||
+      part === '.gradle' ||
+      part === '.idea' ||
+      part === '.vscode' ||
+      part === 'coverage'
+    ) {
+      return true;
+    }
+  }
+
+  if (
+    normalized.endsWith('.apk') ||
+    normalized.endsWith('.DS_Store') ||
+    normalized.endsWith('Thumbs.db')
+  ) {
+    return true;
+  }
+
   return IGNORED_PATHS.some(ignored => {
-    return normalized === ignored || normalized.startsWith(ignored + '/') || normalized.endsWith('.apk');
+    return normalized === ignored || normalized.startsWith(ignored + '/');
   });
 }
 
@@ -357,7 +441,15 @@ function validateProject(extractedPath) {
 
   // 5. Firebase & Capacitor Dependencies Check
   if (newPkg) {
-    const allDeps = { ...newPkg.dependencies, ...newPkg.devDependencies };
+    const curPkgPath = path.join(PROJECT_ROOT, 'package.json');
+    let curDeps = {};
+    if (fs.existsSync(curPkgPath)) {
+      try {
+        const curPkg = JSON.parse(fs.readFileSync(curPkgPath, 'utf8'));
+        curDeps = { ...curPkg.dependencies, ...curPkg.devDependencies };
+      } catch (e) {}
+    }
+    const allDeps = { ...curDeps, ...newPkg.dependencies, ...newPkg.devDependencies };
     
     // If project uses Capacitor / Android
     const hasAndroid = fs.existsSync(path.join(extractedPath, 'android')) || fs.existsSync(path.join(PROJECT_ROOT, 'android'));
@@ -396,11 +488,74 @@ function validateProject(extractedPath) {
 }
 
 // ------------------------------------------------------------------
+// Smart Package.json Merger
+// ------------------------------------------------------------------
+function mergePackageJson(curPath, newPath) {
+  if (!fs.existsSync(curPath) || !fs.existsSync(newPath)) return null;
+
+  try {
+    const curPkg = JSON.parse(fs.readFileSync(curPath, 'utf8'));
+    const newPkg = JSON.parse(fs.readFileSync(newPath, 'utf8'));
+
+    // Preserve local update scripts
+    if (!newPkg.scripts) newPkg.scripts = {};
+    if (curPkg.scripts) {
+      if (curPkg.scripts['yeti-update'] && !newPkg.scripts['yeti-update']) {
+        newPkg.scripts['yeti-update'] = curPkg.scripts['yeti-update'];
+      }
+      if (curPkg.scripts['yeti-rollback'] && !newPkg.scripts['yeti-rollback']) {
+        newPkg.scripts['yeti-rollback'] = curPkg.scripts['yeti-rollback'];
+      }
+    }
+
+    // Preserve Capacitor and essential local packages if present locally but missing in new update ZIP
+    const preserveKeys = [
+      '@capacitor/core',
+      '@capacitor/cli',
+      '@capacitor/android',
+      '@capacitor/ios'
+    ];
+
+    const curDevDeps = curPkg.devDependencies || {};
+    const curDeps = curPkg.dependencies || {};
+    const newDevDeps = newPkg.devDependencies || {};
+    const newDeps = newPkg.dependencies || {};
+
+    for (const key of preserveKeys) {
+      if (curDevDeps[key] && !newDevDeps[key] && !newDeps[key]) {
+        newDevDeps[key] = curDevDeps[key];
+      }
+      if (curDeps[key] && !newDeps[key] && !newDevDeps[key]) {
+        newDeps[key] = curDeps[key];
+      }
+    }
+
+    // Preserve optionalDependencies (e.g. @rollup/rollup-win32-x64-msvc for Windows)
+    const curOptDeps = curPkg.optionalDependencies || {};
+    const newOptDeps = newPkg.optionalDependencies || {};
+    for (const [k, v] of Object.entries(curOptDeps)) {
+      if (!newOptDeps[k]) {
+        newOptDeps[k] = v;
+      }
+    }
+    newPkg.optionalDependencies = newOptDeps;
+
+    newPkg.devDependencies = newDevDeps;
+    newPkg.dependencies = newDeps;
+
+    return newPkg;
+  } catch (e) {
+    return null;
+  }
+}
+
+// ------------------------------------------------------------------
 // Step 4: Compute Diff & Preview Report
 // ------------------------------------------------------------------
 function computeDiff(extractedPath) {
   const extractedFiles = getAllFiles(extractedPath);
   const currentFiles = getAllFiles(PROJECT_ROOT);
+  const hasLocalConfig = hasLocalCapacitorConfig();
 
   const currentMap = new Map();
   for (const f of currentFiles) {
@@ -418,10 +573,17 @@ function computeDiff(extractedPath) {
     const extractedFp = path.join(extractedPath, f);
     const contentNew = fs.readFileSync(extractedFp, 'utf8');
 
+    if (getCapacitorConfigPaths().includes(f) && hasLocalConfig) {
+      currentMap.delete(f);
+      continue;
+    }
+
     if (!currentMap.has(f)) {
       added.push(f);
     } else {
-      if (currentMap.get(f) !== contentNew) {
+      const curNorm = currentMap.get(f).replace(/\r\n/g, '\n');
+      const newNorm = contentNew.replace(/\r\n/g, '\n');
+      if (curNorm !== newNorm) {
         modified.push(f);
       }
       currentMap.delete(f);
@@ -429,10 +591,11 @@ function computeDiff(extractedPath) {
   }
 
   for (const [f] of currentMap.entries()) {
+    if (getCapacitorConfigPaths().includes(f) && hasLocalConfig) continue;
     deleted.push(f);
   }
 
-  // Compare package.json dependencies
+  // Compare package.json dependencies with smart merge
   const curPkgPath = path.join(PROJECT_ROOT, 'package.json');
   const newPkgPath = path.join(extractedPath, 'package.json');
   let depsChanged = false;
@@ -441,10 +604,10 @@ function computeDiff(extractedPath) {
   if (fs.existsSync(curPkgPath) && fs.existsSync(newPkgPath)) {
     try {
       const curPkg = JSON.parse(fs.readFileSync(curPkgPath, 'utf8'));
-      const newPkg = JSON.parse(fs.readFileSync(newPkgPath, 'utf8'));
+      const mergedPkg = mergePackageJson(curPkgPath, newPkgPath) || JSON.parse(fs.readFileSync(newPkgPath, 'utf8'));
 
       const curDeps = { ...curPkg.dependencies, ...curPkg.devDependencies };
-      const newDeps = { ...newPkg.dependencies, ...newPkg.devDependencies };
+      const newDeps = { ...mergedPkg.dependencies, ...mergedPkg.devDependencies };
 
       for (const [k, v] of Object.entries(newDeps)) {
         if (!curDeps[k]) {
@@ -522,13 +685,64 @@ function createBackup() {
 // ------------------------------------------------------------------
 // Step 6: Apply Update Files
 // ------------------------------------------------------------------
-function applyUpdateFiles(extractedPath) {
+function applyUpdateFiles(extractedPath, deletedFiles = []) {
   const extractedFiles = getAllFiles(extractedPath);
 
   logInfo(`Remplacement des fichiers du projet...`);
+
+  // Clean up any stale capacitor.config.json if capacitor.config.ts exists locally
+  const tsCfgPath = path.join(PROJECT_ROOT, 'capacitor.config.ts');
+  const jsonCfgPath = path.join(PROJECT_ROOT, 'capacitor.config.json');
+  if (fs.existsSync(tsCfgPath) && fs.existsSync(jsonCfgPath)) {
+    try {
+      fs.unlinkSync(jsonCfgPath);
+      logInfo(`  ℹ Nettoyage du fichier capacitor.config.json en conflit pour privilégier capacitor.config.ts.`);
+    } catch (e) {}
+  }
+
+  const hasLocalConfig = hasLocalCapacitorConfig();
+
+  // 1. Delete removed source files (strictly ignoring excluded/local folders and preserved local Capacitor configs)
+  let deletedCount = 0;
+  for (const relPath of deletedFiles) {
+    if (isIgnored(relPath)) continue;
+    if (getCapacitorConfigPaths().includes(relPath) && hasLocalConfig) continue;
+    const destFile = path.join(PROJECT_ROOT, relPath);
+    if (fs.existsSync(destFile)) {
+      try {
+        fs.unlinkSync(destFile);
+        deletedCount++;
+      } catch (e) {
+        // ignore
+      }
+    }
+  }
+
+  if (deletedCount > 0) {
+    logInfo(`${deletedCount} ancien(s) fichier(s) source supprimé(s).`);
+  }
+
+  // 2. Copy updated/added files
   for (const relPath of extractedFiles) {
+    if (isIgnored(relPath)) continue;
+
+    // Preserving local Capacitor configuration
+    if (getCapacitorConfigPaths().includes(relPath) && hasLocalConfig) {
+      logInfo(`  ℹ Conservation de la configuration Capacitor locale (${relPath} ignoré du ZIP)`);
+      continue;
+    }
+
     const srcFile = path.join(extractedPath, relPath);
     const destFile = path.join(PROJECT_ROOT, relPath);
+
+    if (relPath === 'package.json') {
+      const mergedPkg = mergePackageJson(destFile, srcFile);
+      if (mergedPkg) {
+        ensureDir(path.dirname(destFile));
+        fs.writeFileSync(destFile, JSON.stringify(mergedPkg, null, 2), 'utf8');
+        continue;
+      }
+    }
 
     ensureDir(path.dirname(destFile));
     fs.copyFileSync(srcFile, destFile);
@@ -605,24 +819,44 @@ function handleManualRollback() {
 }
 
 // ------------------------------------------------------------------
-// Command Runner with Duration Tracking
+// Command Runner with Duration Tracking and Output Capture
 // ------------------------------------------------------------------
 function runCmd(cmd, options = {}) {
   logInfo(`Exécution : ${cmd}`);
   const start = Date.now();
+  let outputBuf = '';
   try {
     const res = spawnSync(cmd, {
       shell: true,
       cwd: options.cwd || PROJECT_ROOT,
-      stdio: 'inherit',
+      stdio: ['inherit', 'pipe', 'pipe'],
+      encoding: 'utf8',
       env: process.env
     });
+
+    if (res.stdout) {
+      process.stdout.write(res.stdout);
+      outputBuf += res.stdout;
+    }
+    if (res.stderr) {
+      process.stderr.write(res.stderr);
+      outputBuf += res.stderr;
+    }
+
     const duration = Date.now() - start;
-    return { success: res.status === 0, duration };
+    return {
+      success: res.status === 0,
+      duration,
+      output: outputBuf
+    };
   } catch (err) {
     const duration = Date.now() - start;
     logError(`Erreur lors de l'exécution de '${cmd}' : ${err.message}`);
-    return { success: false, duration };
+    return {
+      success: false,
+      duration,
+      output: err.message
+    };
   }
 }
 
@@ -686,7 +920,7 @@ async function main() {
   console.log(`  • Fichiers ajoutés   : ${c.green}${diff.added.length}${c.reset}`);
   console.log(`  • Fichiers modifiés  : ${c.yellow}${diff.modified.length}${c.reset}`);
   console.log(`  • Fichiers supprimés : ${c.red}${diff.deleted.length}${c.reset}`);
-  console.log(`  • Dépendances npm    : ${diff.depsChanged ? c.yellow('Modifiées') : c.green('Inchangées')}`);
+  console.log(`  • Dépendances npm    : ${diff.depsChanged ? `${c.yellow}Modifiées${c.reset}` : `${c.green}Inchangées${c.reset}`}`);
 
   if (diff.depsChanged) {
     if (diff.depSummary.added.length) console.log(`    - Ajouts     : ${diff.depSummary.added.join(', ')}`);
@@ -695,7 +929,27 @@ async function main() {
   }
   console.log(`${c.cyan}${c.bold}----------------------------------------------------${c.reset}\n`);
 
-  if (!args.includes('--yes')) {
+  if (diff.deleted.length > 50) {
+    console.log(`  ${c.red}${c.bold}⚠ ALERTE SÉCURITÉ : NOMBRE ANORMALEMENT ÉLEVÉ DE SUPPRESSIONS DÉTECTÉ !${c.reset}`);
+    console.log(`  ${c.yellow}La mise à jour prévoit la suppression de ${c.bold}${c.red}${diff.deleted.length}${c.reset}${c.yellow} fichiers source.${c.reset}`);
+    console.log(`  ${c.yellow}Exemples de fichiers concernés : ${diff.deleted.slice(0, 5).join(', ')}...${c.reset}\n`);
+
+    const confirmAnswer = await askQuestion(`${c.red}${c.bold}Pour débloquer la procédure, tapez 'CONFIRMER' ou 'OUI' pour autoriser cette suppression massive : ${c.reset}`);
+    const normalizedConfirm = confirmAnswer.trim().toLowerCase();
+    if (
+      normalizedConfirm !== 'confirmer' &&
+      normalizedConfirm !== 'oui' &&
+      normalizedConfirm !== 'o' &&
+      normalizedConfirm !== 'yes' &&
+      normalizedConfirm !== 'y'
+    ) {
+      logError(`Procédure bloquée : La suppression massive de ${diff.deleted.length} fichiers a été refusée.`);
+      logInfo('Aucun fichier du projet n\'a été modifié.');
+      removeDir(TMP_DIR);
+      process.exit(1);
+    }
+    logWarning(`Suppression massive de ${diff.deleted.length} fichiers explicitement confirmée par l'utilisateur.`);
+  } else if (!args.includes('--yes')) {
     const answer = await askQuestion(`${c.yellow}${c.bold}Continuer la mise à jour ? [O/n] : ${c.reset}`);
     const normalized = answer.trim().toLowerCase();
     if (normalized === 'n' || normalized === 'no' || (normalized !== 'o' && normalized !== 'oui' && normalized !== 'y' && normalized !== 'yes' && normalized !== '')) {
@@ -722,7 +976,7 @@ async function main() {
   // Step 6: Application of Files
   logStep(6, 'Remplacement des fichiers du projet');
   try {
-    applyUpdateFiles(extractedPath);
+    applyUpdateFiles(extractedPath, diff.deleted);
   } catch (err) {
     logError(`Erreur lors de l'application des fichiers : ${err.message}`);
     rollbackFromBackup(backupFolder);
@@ -734,8 +988,8 @@ async function main() {
   let npmStatus = 'Ignoré (pas de changement)';
   let npmDurationStr = '0 sec';
   if (diff.depsChanged || !fs.existsSync(path.join(PROJECT_ROOT, 'node_modules'))) {
-    logStep(7, 'Mise à jour des dépendances (npm install)');
-    const res = runCmd('npm install');
+    logStep(7, 'Mise à jour des dépendances (npm install --include=optional)');
+    const res = runCmd('npm install --include=optional');
     npmDurationStr = formatDuration(res.duration);
     if (!res.success) {
       logError('`npm install` a échoué. Déclenchement du rollback automatique...');
@@ -751,7 +1005,31 @@ async function main() {
 
   // Step 8: Build Verification
   logStep(8, 'Compilation du projet (npm run build)');
-  const buildRes = runCmd('npm run build');
+  let buildRes = runCmd('npm run build');
+
+  // Check for missing Rollup / Esbuild platform-specific native binaries (common npm bug on Windows)
+  if (!buildRes.success && buildRes.output && (
+    buildRes.output.includes('rollup-win32') ||
+    buildRes.output.includes('@rollup/rollup-') ||
+    (buildRes.output.includes('MODULE_NOT_FOUND') && buildRes.output.includes('rollup')) ||
+    buildRes.output.includes('esbuild-win32')
+  )) {
+    logWarning('  ⚠ Détection d\'un module natif Rollup/Esbuild Windows manquant.');
+    logInfo('  ℹ Réparation automatique : installation directe de @rollup/rollup-win32-x64-msvc...');
+    
+    // Explicitly install Windows Rollup binary
+    runCmd('npm install @rollup/rollup-win32-x64-msvc --no-save --force');
+
+    // Remove stale package-lock.json if present
+    const lockPath = path.join(PROJECT_ROOT, 'package-lock.json');
+    if (fs.existsSync(lockPath)) {
+      try { fs.unlinkSync(lockPath); } catch (e) {}
+    }
+
+    logInfo('  ℹ Nouvelle tentative de compilation (npm run build)...');
+    buildRes = runCmd('npm run build');
+  }
+
   const buildDurationStr = formatDuration(buildRes.duration);
   if (!buildRes.success) {
     logError('La compilation `npm run build` a échoué. Déclenchement du rollback automatique...');
@@ -766,10 +1044,33 @@ async function main() {
   let capDurationStr = '0 sec';
   const hasCapacitor = fs.existsSync(path.join(PROJECT_ROOT, 'capacitor.config.ts')) ||
                        fs.existsSync(path.join(PROJECT_ROOT, 'capacitor.config.json')) ||
+                       fs.existsSync(path.join(PROJECT_ROOT, 'capacitor.config.js')) ||
                        fs.existsSync(path.join(PROJECT_ROOT, 'android'));
 
   if (hasCapacitor) {
     logStep(9, 'Synchronisation Android Capacitor (npx cap sync android)');
+
+    // Ensure stale/conflicting capacitor.config.json is removed if capacitor.config.ts exists
+    const tsCfgPath = path.join(PROJECT_ROOT, 'capacitor.config.ts');
+    const jsonCfgPath = path.join(PROJECT_ROOT, 'capacitor.config.json');
+    if (fs.existsSync(tsCfgPath) && fs.existsSync(jsonCfgPath)) {
+      try {
+        fs.unlinkSync(jsonCfgPath);
+        logInfo('  ℹ Nettoyage de capacitor.config.json obsolète pour privilégier capacitor.config.ts');
+      } catch (e) {}
+    }
+
+    const detectedWebDir = detectCapacitorWebDir();
+    logInfo(`  ℹ Configuration Capacitor détectée : webDir = '${detectedWebDir}'`);
+
+    const targetWebDirPath = path.join(PROJECT_ROOT, detectedWebDir);
+    if (!fs.existsSync(targetWebDirPath)) {
+      logWarning(`  ⚠ Le dossier des assets web '${detectedWebDir}' n'existe pas encore. Création du dossier...`);
+      ensureDir(targetWebDirPath);
+    } else {
+      logSuccess(`  ✓ Dossier des assets web '${detectedWebDir}' vérifié avec succès.`);
+    }
+
     const capRes = runCmd('npx cap sync android');
     capDurationStr = formatDuration(capRes.duration);
     if (!capRes.success) {
@@ -862,10 +1163,10 @@ async function main() {
   console.log(`  • Résultat validation ZIP    : ${c.green}OK${c.reset}`);
   console.log(`  • Résultat npm install       : ${npmStatus}`);
   console.log(`  • Résultat Build             : ${c.green}OK${c.reset} (${buildDurationStr})`);
-  console.log(`  • Résultat Capacitor Sync    : ${capStatus.startsWith('OK') ? c.green(capStatus) : capStatus}`);
-  console.log(`  • Résultat Génération APK    : ${apkStatus.startsWith('OK') ? c.green(apkStatus) : apkStatus}`);
-  console.log(`  • Résultat Git Commit        : ${gitCommitStatus.startsWith('OK') ? c.green(gitCommitStatus) : gitCommitStatus}`);
-  console.log(`  • Résultat Git Push (GitHub)  : ${gitPushStatus.startsWith('OK') ? c.green(gitPushStatus) : gitPushStatus}`);
+  console.log(`  • Résultat Capacitor Sync    : ${capStatus.startsWith('OK') ? `${c.green}${capStatus}${c.reset}` : capStatus}`);
+  console.log(`  • Résultat Génération APK    : ${apkStatus.startsWith('OK') ? `${c.green}${apkStatus}${c.reset}` : apkStatus}`);
+  console.log(`  • Résultat Git Commit        : ${gitCommitStatus.startsWith('OK') ? `${c.green}${gitCommitStatus}${c.reset}` : gitCommitStatus}`);
+  console.log(`  • Résultat Git Push (GitHub)  : ${gitPushStatus.startsWith('OK') ? `${c.green}${gitPushStatus}${c.reset}` : gitPushStatus}`);
   if (archivedZipPath) {
     console.log(`\n  ${c.bold}Historique du ZIP archivé :${c.reset}`);
     console.log(`  ↳ ${c.cyan}${c.bold}${archivedZipPath}${c.reset}`);
@@ -874,6 +1175,9 @@ async function main() {
   console.log(`  ↳ ${c.green}${c.bold}${apkPath}${c.reset}`);
   console.log(`\n  ${c.bold}Emplacement Sauvegarde Locale :${c.reset}`);
   console.log(`  ↳ ${c.cyan}${c.bold}${backupFolder}${c.reset}`);
+  console.log(`\n  ${c.yellow}${c.bold}ℹ COMMENT VOIR VOS NOUVELLES MODIFICATIONS :${c.reset}`);
+  console.log(`   1. Sur Mobile Android : Copiez le fichier 'app-release.apk' ci-dessus sur votre smartphone et installez-le.`);
+  console.log(`   2. Sur Navigateur Web : Si vous testez en local, faites un rafraîchissement forcé (Ctrl + F5).`);
   console.log(`\n${c.green}${c.bold}✓ Mise à jour entièrement terminée et sécurisée avec succès !${c.reset}\n`);
 }
 

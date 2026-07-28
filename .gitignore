@@ -13,5 +13,6 @@ coverage/
 updates/
 android/app/build/
 android/build/
+.gradle/
 android/.gradle/
 *.apk

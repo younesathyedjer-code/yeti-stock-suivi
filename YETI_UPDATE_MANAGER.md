@@ -111,7 +111,28 @@ Les fichiers ZIP de mise à jour ne sont plus jamais supprimés après installat
 
 ---
 
-### 5. Système de Rollback (Sécurité Absolue)
+### 5. Exclusion Permanente des Dossiers Locaux & Protections Sécurité
+- **Dossiers Exclus Permanents :** Les dossiers locaux essentiels suivants ne sont jamais supprimés ni remplacés lors d'une mise à jour :
+  - `android/` (configuration et code natif Android/APK)
+  - `node_modules/` (dépendances installées)
+  - `dist/` (build de production)
+  - `.yeti_backups/` (sauvegardes automatiques)
+  - `.git/` (historique et configuration Git)
+- **Calcul de Diff Sécurisé :** Les fichiers contenus dans ces dossiers exclus ne sont jamais comptabilisés comme "supprimés" dans le rapport de prévisualisation.
+- **Protection Contre la Suppression Massive (>50 Fichiers) :** Si une mise à jour prévoit la suppression de plus de 50 fichiers source, le processus est automatiquement bloqué et nécessite une confirmation explicite (en tapant `CONFIRMER` ou `OUI`).
+
+---
+
+### 6. Fusion Intelligente, Configuration Capacitor & Auto-Réparation Windows
+- **Préservation de `capacitor.config.ts` :** Le fichier de configuration local `capacitor.config.ts` (ou `.json` / `.js`) n'est jamais écrasé ni remplacé par le fichier du ZIP d'exportation.
+- **Détection Automatique de `webDir` :** Avant d'exécuter `npx cap sync android`, le gestionnaire analyse dynamiquement la valeur réelle de `webDir` (par ex. `dist`), l'affiche dans le journal de suivi (`ℹ Configuration Capacitor détectée : webDir = 'dist'`), et s'assure que le dossier des assets web existe et est prêt avant la synchronisation.
+- **Nettoyage des Conflits de Configuration :** Si un fichier `capacitor.config.json` obsolète est présent aux côtés de `capacitor.config.ts`, il est automatiquement nettoyé pour éviter que le CLI Capacitor ne se trompe de dossier cible.
+- **Protection Capacitor & Scripts dans `package.json` :** Lors du remplacement de `package.json`, le gestionnaire effectue une fusion intelligente qui préserve automatiquement vos dépendances locales Capacitor (`@capacitor/core`, `@capacitor/cli`, `@capacitor/android`, etc.) ainsi que vos scripts de mise à jour (`yeti-update`, `yeti-rollback`), même si le fichier ZIP exporté par AI Studio ne les inclut pas.
+- **Réparation Automatique des Binaires Windows (Rollup / Esbuild) :** Si `npm run build` échoue en raison de modules natifs Windows manquants (ex: `@rollup/rollup-win32-x64-msvc`), le gestionnaire intercepte l'erreur, réinstalle automatiquement les binaires optionnels natifs via `npm install @rollup/rollup-win32-x64-msvc --no-save --force` et relance la compilation sans interrompre le processus.
+
+---
+
+### 7. Système de Rollback (Sécurité Absolue)
 
 #### Rollback Automatique
 Si une erreur survient à **n'importe quelle étape de construction** (`npm install`, `npm run build`, `npx cap sync android`, ou génération APK), Yeti Update Manager :
