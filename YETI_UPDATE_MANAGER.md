@@ -151,12 +151,18 @@ Afin d'éliminer toute incertitude quant à la propagation des nouvelles fonctio
    - Avant de lancer `npm run build`, le gestionnaire vérifie que tous les fichiers du dossier `src/` du projet sont 100% conformes aux fichiers source du ZIP (comparaison SHA-256) et affiche explicitement le chemin absolu du projet utilisé par le build.
 5. **Validation de la Régénération de `dist` (Post-Build) :**
    - Après `npm run build`, le gestionnaire vérifie que le dossier `dist` a réellement été régénéré (nouvelle date de modification, tailles et empreintes SHA-256 des bundles JS/CSS et fichiers HTML).
-6. **Validation de `dist` Avant `npx cap sync` :**
+6. **Étape Déploiement Firebase Hosting (Étape Indépendante) :**
+   - Vérifie la présence de `firebase.json` et la disponibilité de Firebase CLI (`npx firebase --version`).
+   - Détecte et affiche le projet Firebase ciblé (ex: `yeti-stock-suivi`).
+   - Demande confirmation avant l'exécution de `npx firebase deploy --only hosting`.
+   - Affiche l'URL Web Firebase Hosting (`https://<project>.web.app`), la date du déploiement et le statut (`SUCCESS` ou `ERROR`).
+   - **Étape non bloquante :** En cas d'échec de déploiement Firebase (par ex. réseau ou réauthentification requise), la mise à jour locale et la génération d'APK ne sont jamais annulées.
+7. **Validation de `dist` Avant `npx cap sync` :**
    - S'assure que les fichiers de `dist` n'ont été altérés par aucun processus parasite avant la synchronisation native Android.
-7. **Vérification Strictement Identique des Assets Android (Post-Capacitor Sync) :**
+8. **Vérification Strictement Identique des Assets Android (Post-Capacitor Sync) :**
    - Après `npx cap sync android`, le gestionnaire compare chaque fichier de `dist/` avec sa copie dans `android/app/src/main/assets/public/`.
    - **Garantie Totale :** Si un seul fichier dans `android/app/src/main/assets/public/` est manquant ou ne possède pas un SHA-256 100% identique à `dist`, la mise à jour s'arrête immédiatement et déclenche un rollback.
-8. **Métadonnées de l'APK Release :**
+9. **Métadonnées de l'APK Release :**
    - Affiche le nom, la taille exacte (en octets et MB), la date de création et l'empreinte SHA-256 de l'APK Release généré (`app-release.apk`).
 
 ---

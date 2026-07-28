@@ -1326,6 +1326,81 @@ async function main() {
   console.log('');
   logSuccess(`Compilation et régénération du dossier '${webDir}' réussies en ${buildDurationStr} (${distFiles.length} fichier(s) générés).`);
 
+  // Step 8.5: Déploiement Firebase Hosting (Étape Indépendante)
+  let firebaseStatus = 'Ignoré (pas de firebase.json)';
+  let firebaseHostingUrl = null;
+  let firebaseDeployTime = null;
+
+  const firebaseJsonPath = path.join(PROJECT_ROOT, 'firebase.json');
+  const hasFirebaseJson = fs.existsSync(firebaseJsonPath);
+
+  if (hasFirebaseJson) {
+    logStep(8.5, 'Déploiement Firebase Hosting (Étape Indépendante)');
+    try {
+      // 1. Détecter le projet Firebase ciblé
+      let targetProjectId = 'yeti-stock-suivi';
+      const firebaseRcPath = path.join(PROJECT_ROOT, '.firebaserc');
+      if (fs.existsSync(firebaseRcPath)) {
+        try {
+          const rc = JSON.parse(fs.readFileSync(firebaseRcPath, 'utf8'));
+          if (rc && rc.projects && rc.projects.default) {
+            targetProjectId = rc.projects.default;
+          }
+        } catch (e) {}
+      }
+
+      logInfo(`Fichier 'firebase.json' détecté.`);
+      logInfo(`Projet Firebase ciblé : ${c.bold}${c.cyan}${targetProjectId}${c.reset}`);
+
+      // 2. Vérifier Firebase CLI
+      logInfo('Vérification de l\'installation de Firebase CLI...');
+      const cliCheck = runCmd('npx firebase --version');
+      if (!cliCheck.success) {
+        logWarning('Firebase CLI non disponible ou non accessible via npx.');
+        firebaseStatus = 'ERROR (Firebase CLI non disponible)';
+        logError('Statut Firebase Hosting : ERROR');
+      } else {
+        // 3. Demander confirmation avant le déploiement si pas d'argument --yes
+        let shouldDeploy = true;
+        if (!args.includes('--yes')) {
+          const answer = await askQuestion(`${c.yellow}${c.bold}Déployer la mise à jour sur Firebase Hosting (${targetProjectId}) ? [O/n] : ${c.reset}`);
+          const normalized = answer.trim().toLowerCase();
+          if (normalized === 'n' || normalized === 'no') {
+            shouldDeploy = false;
+            logInfo('Déploiement Firebase Hosting annulé à la demande de l\'utilisateur.');
+            firebaseStatus = 'Ignoré (Annulé par l\'utilisateur)';
+          }
+        }
+
+        if (shouldDeploy) {
+          logInfo(`Lancement du déploiement : npx firebase deploy --only hosting...`);
+          const fbRes = runCmd('npx firebase deploy --only hosting');
+          firebaseDeployTime = new Date().toLocaleString('fr-FR');
+
+          if (fbRes.success) {
+            firebaseHostingUrl = `https://${targetProjectId}.web.app`;
+            firebaseStatus = `SUCCESS (Déployé le ${firebaseDeployTime})`;
+            logSuccess('Déploiement Firebase Hosting réussi avec succès !');
+            console.log(`  • URL Firebase : ${c.cyan}${c.bold}${firebaseHostingUrl}${c.reset}`);
+            console.log(`  • Date         : ${firebaseDeployTime}`);
+            console.log(`  • Statut       : ${c.green}${c.bold}SUCCESS${c.reset}\n`);
+          } else {
+            firebaseStatus = 'ERROR (Échec déploiement)';
+            logError('Échec du déploiement Firebase Hosting.');
+            console.log(`  • Statut       : ${c.red}${c.bold}ERROR${c.reset}`);
+            logWarning('Remarque : L\'échec du déploiement Firebase Hosting n\'annule pas la mise à jour locale ni la génération APK (Étape indépendante).');
+          }
+        }
+      }
+    } catch (fbErr) {
+      firebaseStatus = `ERROR (${fbErr.message})`;
+      logError(`Erreur inattendue lors du déploiement Firebase : ${fbErr.message}`);
+      logWarning('Remarque : La mise à jour locale et la suite de la compilation sont conservées.');
+    }
+  } else {
+    logStep(8.5, 'Déploiement Firebase Hosting : Ignoré (firebase.json non trouvé)');
+  }
+
   // Step 9: Capacitor Sync
   let capStatus = 'Ignoré (projet web pur)';
   let capDurationStr = '0 sec';
@@ -1517,12 +1592,17 @@ async function main() {
   console.log(`  ✓ 2. Fichiers copiés       : ${appliedReport.length} fichier(s) appliqués (SHA-256 100% vérifiés)`);
   console.log(`  ✓ 3. Sources Vite          : ${srcCheckCount} fichier(s) dans 'src/' (SHA-256 100% conformes au ZIP)`);
   console.log(`  ✓ 4. Compilation 'dist'    : ${distFiles.length} fichier(s) générés dans '${webDir}' (${buildDurationStr})`);
+  console.log(`  ✓ 4b. Déploiement Firebase  : ${firebaseStatus.includes('SUCCESS') ? `${c.green}${firebaseStatus}${c.reset}` : firebaseStatus}`);
   console.log(`  ✓ 5. Synchro Android Assets : ${distFiles.length} fichier(s) dans public/ (SHA-256 100% identiques à dist)`);
   if (apkMeta) {
     console.log(`  ✓ 6. APK Release Android   : Généré (${(apkMeta.size / (1024 * 1024)).toFixed(2)} MB | SHA-256: ${apkMeta.sha256.slice(0, 16)}...)`);
   }
   console.log(`  ✓ 7. Sauvegarde GitHub     : Commit ${gitCommitStatus} / Push ${gitPushStatus}`);
 
+  if (firebaseHostingUrl && firebaseStatus.includes('SUCCESS')) {
+    console.log(`\n  ${c.bold}URL Web Firebase Hosting :${c.reset}`);
+    console.log(`  ↳ ${c.cyan}${c.bold}${firebaseHostingUrl}${c.reset}`);
+  }
   if (archivedZipPath) {
     console.log(`\n  ${c.bold}Historique du ZIP archivé :${c.reset}`);
     console.log(`  ↳ ${c.cyan}${c.bold}${archivedZipPath}${c.reset}`);
