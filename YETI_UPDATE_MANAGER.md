@@ -151,12 +151,11 @@ Afin d'éliminer toute incertitude quant à la propagation des nouvelles fonctio
    - Avant de lancer `npm run build`, le gestionnaire vérifie que tous les fichiers du dossier `src/` du projet sont 100% conformes aux fichiers source du ZIP (comparaison SHA-256) et affiche explicitement le chemin absolu du projet utilisé par le build.
 5. **Validation de la Régénération de `dist` (Post-Build) :**
    - Après `npm run build`, le gestionnaire vérifie que le dossier `dist` a réellement été régénéré (nouvelle date de modification, tailles et empreintes SHA-256 des bundles JS/CSS et fichiers HTML).
-6. **Étape Déploiement Firebase Hosting (Étape Indépendante) :**
-   - Vérifie la présence de `firebase.json` et la disponibilité de Firebase CLI (`npx firebase --version`).
-   - Détecte et affiche le projet Firebase ciblé (ex: `yeti-stock-suivi`).
-   - Demande confirmation avant l'exécution de `npx firebase deploy --only hosting`.
-   - Affiche l'URL Web Firebase Hosting (`https://<project>.web.app`), la date du déploiement et le statut (`SUCCESS` ou `ERROR`).
-   - **Étape non bloquante :** En cas d'échec de déploiement Firebase (par ex. réseau ou réauthentification requise), la mise à jour locale et la génération d'APK ne sont jamais annulées.
+6. **Transmission Déploiement Web Firebase Hosting (GitHub Actions CI/CD) :**
+   - Détecte la présence de `firebase.json` et le projet Firebase ciblé (`yeti-stock-suivi`).
+   - Transmet le déploiement web à GitHub Actions (`.github/workflows/deploy-firebase.yml`).
+   - Dès l'exécution du `git push origin main` (Étape 11), GitHub Actions installe, compile et déploie le site automatiquement sur `https://yeti-stock-suivi.web.app`.
+   - Fournit un lien direct vers le suivi du workflow GitHub Actions.
 7. **Validation de `dist` Avant `npx cap sync` :**
    - S'assure que les fichiers de `dist` n'ont été altérés par aucun processus parasite avant la synchronisation native Android.
 8. **Vérification Strictement Identique des Assets Android (Post-Capacitor Sync) :**

@@ -400,6 +400,26 @@ function getCommitInfo(extractedPath) {
 }
 
 // ------------------------------------------------------------------
+// Helper: Get GitHub Repository Actions URL
+// ------------------------------------------------------------------
+function getGitHubRepoActionsUrl() {
+  const res = runCmd('git config --get remote.origin.url');
+  if (res.success && res.output) {
+    let url = res.output.trim();
+    if (url.startsWith('git@github.com:')) {
+      url = 'https://github.com/' + url.replace('git@github.com:', '');
+    }
+    if (url.endsWith('.git')) {
+      url = url.slice(0, -4);
+    }
+    if (url.startsWith('https://github.com/')) {
+      return `${url}/actions`;
+    }
+  }
+  return null;
+}
+
+// ------------------------------------------------------------------
 // Helper: Backup Retention & Pruning
 // ------------------------------------------------------------------
 function pruneOldBackups(maxBackups = MAX_BACKUPS) {
@@ -1326,77 +1346,33 @@ async function main() {
   console.log('');
   logSuccess(`Compilation et régénération du dossier '${webDir}' réussies en ${buildDurationStr} (${distFiles.length} fichier(s) générés).`);
 
-  // Step 8.5: Déploiement Firebase Hosting (Étape Indépendante)
+  // Step 8.5: Déploiement Firebase Hosting (Transmis à GitHub Actions CI/CD)
   let firebaseStatus = 'Ignoré (pas de firebase.json)';
   let firebaseHostingUrl = null;
-  let firebaseDeployTime = null;
 
   const firebaseJsonPath = path.join(PROJECT_ROOT, 'firebase.json');
   const hasFirebaseJson = fs.existsSync(firebaseJsonPath);
 
   if (hasFirebaseJson) {
-    logStep(8.5, 'Déploiement Firebase Hosting (Étape Indépendante)');
-    try {
-      // 1. Détecter le projet Firebase ciblé
-      let targetProjectId = 'yeti-stock-suivi';
-      const firebaseRcPath = path.join(PROJECT_ROOT, '.firebaserc');
-      if (fs.existsSync(firebaseRcPath)) {
-        try {
-          const rc = JSON.parse(fs.readFileSync(firebaseRcPath, 'utf8'));
-          if (rc && rc.projects && rc.projects.default) {
-            targetProjectId = rc.projects.default;
-          }
-        } catch (e) {}
-      }
-
-      logInfo(`Fichier 'firebase.json' détecté.`);
-      logInfo(`Projet Firebase ciblé : ${c.bold}${c.cyan}${targetProjectId}${c.reset}`);
-
-      // 2. Vérifier Firebase CLI
-      logInfo('Vérification de l\'installation de Firebase CLI...');
-      const cliCheck = runCmd('npx firebase --version');
-      if (!cliCheck.success) {
-        logWarning('Firebase CLI non disponible ou non accessible via npx.');
-        firebaseStatus = 'ERROR (Firebase CLI non disponible)';
-        logError('Statut Firebase Hosting : ERROR');
-      } else {
-        // 3. Demander confirmation avant le déploiement si pas d'argument --yes
-        let shouldDeploy = true;
-        if (!args.includes('--yes')) {
-          const answer = await askQuestion(`${c.yellow}${c.bold}Déployer la mise à jour sur Firebase Hosting (${targetProjectId}) ? [O/n] : ${c.reset}`);
-          const normalized = answer.trim().toLowerCase();
-          if (normalized === 'n' || normalized === 'no') {
-            shouldDeploy = false;
-            logInfo('Déploiement Firebase Hosting annulé à la demande de l\'utilisateur.');
-            firebaseStatus = 'Ignoré (Annulé par l\'utilisateur)';
-          }
+    logStep(8.5, 'Déploiement Firebase Hosting (Transmis à GitHub Actions CI/CD)');
+    let targetProjectId = 'yeti-stock-suivi';
+    const firebaseRcPath = path.join(PROJECT_ROOT, '.firebaserc');
+    if (fs.existsSync(firebaseRcPath)) {
+      try {
+        const rc = JSON.parse(fs.readFileSync(firebaseRcPath, 'utf8'));
+        if (rc && rc.projects && rc.projects.default) {
+          targetProjectId = rc.projects.default;
         }
-
-        if (shouldDeploy) {
-          logInfo(`Lancement du déploiement : npx firebase deploy --only hosting...`);
-          const fbRes = runCmd('npx firebase deploy --only hosting');
-          firebaseDeployTime = new Date().toLocaleString('fr-FR');
-
-          if (fbRes.success) {
-            firebaseHostingUrl = `https://${targetProjectId}.web.app`;
-            firebaseStatus = `SUCCESS (Déployé le ${firebaseDeployTime})`;
-            logSuccess('Déploiement Firebase Hosting réussi avec succès !');
-            console.log(`  • URL Firebase : ${c.cyan}${c.bold}${firebaseHostingUrl}${c.reset}`);
-            console.log(`  • Date         : ${firebaseDeployTime}`);
-            console.log(`  • Statut       : ${c.green}${c.bold}SUCCESS${c.reset}\n`);
-          } else {
-            firebaseStatus = 'ERROR (Échec déploiement)';
-            logError('Échec du déploiement Firebase Hosting.');
-            console.log(`  • Statut       : ${c.red}${c.bold}ERROR${c.reset}`);
-            logWarning('Remarque : L\'échec du déploiement Firebase Hosting n\'annule pas la mise à jour locale ni la génération APK (Étape indépendante).');
-          }
-        }
-      }
-    } catch (fbErr) {
-      firebaseStatus = `ERROR (${fbErr.message})`;
-      logError(`Erreur inattendue lors du déploiement Firebase : ${fbErr.message}`);
-      logWarning('Remarque : La mise à jour locale et la suite de la compilation sont conservées.');
+      } catch (e) {}
     }
+
+    firebaseHostingUrl = `https://${targetProjectId}.web.app`;
+    firebaseStatus = 'Transmis à GitHub Actions (CI/CD Automatique)';
+
+    logInfo(`Fichier 'firebase.json' détecté.`);
+    logInfo(`Projet Firebase ciblé : ${c.bold}${c.cyan}${targetProjectId}${c.reset}`);
+    logInfo(`URL du site Web en ligne : ${c.cyan}${c.bold}${firebaseHostingUrl}${c.reset}`);
+    logSuccess(`Le déploiement Firebase sera exécuté automatiquement par GitHub Actions après le push Git.`);
   } else {
     logStep(8.5, 'Déploiement Firebase Hosting : Ignoré (firebase.json non trouvé)');
   }
@@ -1563,6 +1539,10 @@ async function main() {
         if (pushRes.success) {
           gitPushStatus = 'OK';
           logSuccess('Git Push vers GitHub réussi !');
+          const actionsUrl = getGitHubRepoActionsUrl();
+          if (actionsUrl) {
+            logInfo(`Workflow GitHub Actions CI/CD enclenché : ${c.cyan}${c.bold}${actionsUrl}${c.reset}`);
+          }
         } else {
           logWarning('Le git push a échoué. Le code est commité localement.');
         }
@@ -1592,16 +1572,21 @@ async function main() {
   console.log(`  ✓ 2. Fichiers copiés       : ${appliedReport.length} fichier(s) appliqués (SHA-256 100% vérifiés)`);
   console.log(`  ✓ 3. Sources Vite          : ${srcCheckCount} fichier(s) dans 'src/' (SHA-256 100% conformes au ZIP)`);
   console.log(`  ✓ 4. Compilation 'dist'    : ${distFiles.length} fichier(s) générés dans '${webDir}' (${buildDurationStr})`);
-  console.log(`  ✓ 4b. Déploiement Firebase  : ${firebaseStatus.includes('SUCCESS') ? `${c.green}${firebaseStatus}${c.reset}` : firebaseStatus}`);
+  console.log(`  ✓ 4b. Déploiement Firebase  : ${c.cyan}${c.bold}${firebaseStatus}${c.reset}`);
   console.log(`  ✓ 5. Synchro Android Assets : ${distFiles.length} fichier(s) dans public/ (SHA-256 100% identiques à dist)`);
   if (apkMeta) {
     console.log(`  ✓ 6. APK Release Android   : Généré (${(apkMeta.size / (1024 * 1024)).toFixed(2)} MB | SHA-256: ${apkMeta.sha256.slice(0, 16)}...)`);
   }
   console.log(`  ✓ 7. Sauvegarde GitHub     : Commit ${gitCommitStatus} / Push ${gitPushStatus}`);
 
-  if (firebaseHostingUrl && firebaseStatus.includes('SUCCESS')) {
-    console.log(`\n  ${c.bold}URL Web Firebase Hosting :${c.reset}`);
+  const actionsUrl = getGitHubRepoActionsUrl();
+  if (firebaseHostingUrl) {
+    console.log(`\n  ${c.bold}URL Web Firebase Hosting (Mise à jour automatique par GitHub Actions) :${c.reset}`);
     console.log(`  ↳ ${c.cyan}${c.bold}${firebaseHostingUrl}${c.reset}`);
+  }
+  if (actionsUrl) {
+    console.log(`\n  ${c.bold}Suivi en direct du déploiement GitHub Actions :${c.reset}`);
+    console.log(`  ↳ ${c.cyan}${c.bold}${actionsUrl}${c.reset}`);
   }
   if (archivedZipPath) {
     console.log(`\n  ${c.bold}Historique du ZIP archivé :${c.reset}`);
