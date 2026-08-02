@@ -218,9 +218,29 @@ export default function Inventaire({
   }, [selectedSessionForPrint]);
 
   // Session editing states
-  const [editingSession, setEditingSession] = useState<any | null>(null);
-  const [editingEntries, setEditingEntries] = useState<Record<string, { perfume: string; quantity: number }[]>>({});
+  interface EditingItem {
+    id: string;
+    isNew?: boolean;
+    gammeId: string;
+    gammeName: string;
+    type: 'mono' | 'mixte';
+    entries: { perfume: string; quantity: number }[];
+  }
+
+  const [editingSession, setEditingSession] = useState<ValidatedSession | null>(null);
+  const [editingItems, setEditingItems] = useState<EditingItem[]>([]);
+  const [deletedItemIds, setDeletedItemIds] = useState<string[]>([]);
   const [isUpdatingSession, setIsUpdatingSession] = useState<boolean>(false);
+
+  // New palette addition state inside edit session modal
+  const [showAddPaletteForm, setShowAddPaletteForm] = useState<boolean>(false);
+  const [editAddGammeId, setEditAddGammeId] = useState<string>('');
+  const [editAddType, setEditAddType] = useState<'mono' | 'mixte'>('mono');
+  const [editAddPerfume, setEditAddPerfume] = useState<string>('');
+  const [editAddQty, setEditAddQty] = useState<number>(100);
+  const [editAddMixedEntries, setEditAddMixedEntries] = useState<{ perfume: string; qty: number }[]>([]);
+  const [editAddActivePerfume, setEditAddActivePerfume] = useState<string | null>(null);
+  const [editAddMixedQtyInput, setEditAddMixedQtyInput] = useState<string>('100');
 
   // QR & Barcode scanner states
   const [isSimulationOpen, setIsSimulationOpen] = useState<boolean>(false);
@@ -741,37 +761,125 @@ export default function Inventaire({
     triggerSuccessMsg("Saisie en cours retirée.");
   };
 
-  const handleStartEditSession = (session: any) => {
+  const handleStartEditSession = (session: ValidatedSession) => {
     setEditingSession(session);
-    const initialEntriesMap: Record<string, { perfume: string; quantity: number }[]> = {};
-    session.items.forEach((item: any) => {
-      initialEntriesMap[item.id] = item.entries.map((e: any) => ({
+    const initialItems: EditingItem[] = session.items.map(item => ({
+      id: item.id,
+      gammeId: item.gammeId,
+      gammeName: item.gammeName,
+      type: item.type,
+      entries: item.entries.map((e: any) => ({
         perfume: e.perfume,
         quantity: e.quantity
-      }));
-    });
-    setEditingEntries(initialEntriesMap);
+      }))
+    }));
+    setEditingItems(initialItems);
+    setDeletedItemIds([]);
+    setShowAddPaletteForm(false);
+    setEditAddGammeId('');
+    setEditAddPerfume('');
+    setEditAddMixedEntries([]);
   };
 
-  const handleUpdateEntryQty = (itemId: string, perfume: string, newQty: number) => {
-    setEditingEntries(prev => {
-      const entries = prev[itemId] || [];
+  const handleUpdateEditingItemQty = (itemId: string, perfume: string, newQty: number) => {
+    setEditingItems(prev => prev.map(item => {
+      if (item.id !== itemId) return item;
       return {
-        ...prev,
-        [itemId]: entries.map(e => e.perfume === perfume ? { ...e, quantity: newQty } : e)
+        ...item,
+        entries: item.entries.map(e => e.perfume === perfume ? { ...e, quantity: Math.max(0, newQty) } : e)
       };
+    }));
+  };
+
+  const handleDeleteEditingItem = (itemId: string) => {
+    setEditingItems(prev => {
+      const itemToDelete = prev.find(i => i.id === itemId);
+      if (itemToDelete && !itemToDelete.isNew) {
+        setDeletedItemIds(d => [...d, itemId]);
+      }
+      return prev.filter(i => i.id !== itemId);
     });
+  };
+
+  const handleAddPaletteToEditSession = () => {
+    const g = gammes.find(x => x.id === editAddGammeId);
+    if (!g) {
+      triggerErrorMsg("Veuillez sélectionner une gamme.");
+      return;
+    }
+
+    if (editAddType === 'mono') {
+      if (!editAddPerfume) {
+        triggerErrorMsg("Veuillez sélectionner un parfum.");
+        return;
+      }
+      if (editAddQty <= 0) {
+        triggerErrorMsg("La quantité doit être supérieure à 0.");
+        return;
+      }
+      const newItem: EditingItem = {
+        id: `new_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        isNew: true,
+        gammeId: g.id,
+        gammeName: g.name,
+        type: 'mono',
+        entries: [{ perfume: editAddPerfume, quantity: editAddQty }]
+      };
+      setEditingItems(prev => [...prev, newItem]);
+      setEditAddPerfume('');
+      setShowAddPaletteForm(false);
+      triggerSuccessMsg(`Palette (${g.name} - ${editAddPerfume}) ajoutée à la modification.`);
+    } else {
+      if (editAddMixedEntries.length === 0) {
+        triggerErrorMsg("Veuillez ajouter au moins un parfum pour la palette mixte.");
+        return;
+      }
+      const newItem: EditingItem = {
+        id: `new_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        isNew: true,
+        gammeId: g.id,
+        gammeName: g.name,
+        type: 'mixte',
+        entries: editAddMixedEntries.map(e => ({ perfume: e.perfume, quantity: e.qty }))
+      };
+      setEditingItems(prev => [...prev, newItem]);
+      setEditAddMixedEntries([]);
+      setEditAddActivePerfume(null);
+      setShowAddPaletteForm(false);
+      triggerSuccessMsg(`Palette mixte (${g.name}) ajoutée à la modification.`);
+    }
   };
 
   const handleSaveSessionEdit = async () => {
+    if (!editingSession) return;
     setIsUpdatingSession(true);
     try {
-      for (const item of editingSession.items) {
-        const updatedEntries = editingEntries[item.id];
-        await onUpdateInventoryItem(item.id, updatedEntries);
+      // 1. Delete items removed during editing from Firestore
+      for (const id of deletedItemIds) {
+        await onDeleteInventoryItem(id);
       }
-      triggerSuccessMsg(`L'inventaire complet N°${editingSession.numberCode} a été modifié avec succès !`);
+
+      // 2. Add new items or Update existing items
+      for (const item of editingItems) {
+        if (item.isNew) {
+          await onAddInventoryItem(
+            item.gammeId,
+            item.gammeName,
+            item.type,
+            item.entries.map(e => ({ perfume: e.perfume, qty: e.quantity })),
+            editingSession.id,
+            editingSession.validationNumber,
+            editingSession.createdAt
+          );
+        } else {
+          await onUpdateInventoryItem(item.id, item.entries);
+        }
+      }
+
+      triggerSuccessMsg(`L'inventaire N°${editingSession.numberCode} a été modifié et enregistré avec succès !`);
       setEditingSession(null);
+      setEditingItems([]);
+      setDeletedItemIds([]);
     } catch (e: any) {
       triggerErrorMsg(e.message || "Erreur lors de la modification de l'inventaire.");
     } finally {
@@ -1713,58 +1821,314 @@ export default function Inventaire({
                 <h3 className="text-sm font-bold text-slate-900 font-sans flex items-center gap-2">
                   <Edit2 className="w-4 h-4 text-blue-600" /> Modifier l'Inventaire {editingSession.numberCode}
                 </h3>
-                <p className="text-[11px] text-slate-500 font-sans">
+                <p className="text-[11px] text-slate-500 font-sans mt-0.5">
                   Saisie d'origine par {editingSession.agentName} le {new Date(editingSession.createdAt).toLocaleDateString('fr-FR')} à {new Date(editingSession.createdAt).toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit', hour12: false})}
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => setEditingSession(null)}
+                onClick={() => {
+                  setEditingSession(null);
+                  setEditingItems([]);
+                  setDeletedItemIds([]);
+                }}
                 className="bg-white border border-slate-200 text-slate-400 hover:text-slate-600 p-1.5 rounded-xl cursor-pointer transition-all"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
+            {/* Live Metrics Summary Bar */}
+            {(() => {
+              const totalPalettes = editingItems.length;
+              const totalCartons = editingItems.reduce((sum, item) => sum + item.entries.reduce((eSum, e) => eSum + e.quantity, 0), 0);
+              return (
+                <div className="bg-blue-50/70 border-b border-blue-100 px-6 py-3 flex items-center justify-between text-xs text-blue-900 font-medium">
+                  <div className="flex items-center gap-4">
+                    <span>Total Palettes : <strong className="font-extrabold text-blue-950">{totalPalettes}</strong></span>
+                    <span>Total Cartons : <strong className="font-extrabold text-blue-950">{totalCartons}</strong></span>
+                  </div>
+                  {deletedItemIds.length > 0 && (
+                    <span className="text-[11px] text-rose-600 font-semibold italic">
+                      {deletedItemIds.length} palette(s) supprimée(s)
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* Content */}
             <div className="p-6 overflow-y-auto flex-1 space-y-6">
-              {editingSession.items.map((item: any) => (
-                <div key={item.id} className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-3 text-left">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-xs text-slate-800 uppercase tracking-wider">{item.gammeName}</span>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                      item.type === 'mono' ? 'bg-blue-105/50 text-blue-700' : 'bg-amber-105/50 text-amber-700'
-                    }`}>
-                      {item.type === 'mono' ? 'Simple' : 'Palette Mixte'}
-                    </span>
-                  </div>
+              
+              {/* Existing / Added Palettes List */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Palettes dans l'inventaire ({editingItems.length})
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAddPaletteForm(!showAddPaletteForm);
+                      if (!editAddGammeId && gammes.length > 0) {
+                        setEditAddGammeId(gammes[0].id);
+                        if (gammes[0].perfumes.length > 0) {
+                          setEditAddPerfume(gammes[0].perfumes[0]);
+                        }
+                        setEditAddQty(gammes[0].standardQuantity || 100);
+                      }
+                    }}
+                    className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs rounded-xl transition-all border border-blue-200 cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    {showAddPaletteForm ? "Masquer formulaire" : "Ajouter une palette"}
+                  </button>
+                </div>
 
-                  <div className="space-y-2.5">
-                    {(editingEntries[item.id] || []).map((entry, entryIdx) => (
-                      <div key={entryIdx} className="flex items-center justify-between gap-4 bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs">
-                        <span className="text-xs font-semibold text-slate-700">{entry.perfume}</span>
-                        <div className="flex items-center gap-2">
+                {/* Form to Add a New Palette */}
+                {showAddPaletteForm && (
+                  <div className="bg-blue-50/40 border-2 border-dashed border-blue-200 p-4 rounded-2xl space-y-4 text-left">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-extrabold text-blue-900 uppercase">Nouvelle Palette</span>
+                      <div className="flex gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setEditAddType('mono')}
+                          className={`px-3 py-1 text-[11px] font-bold rounded-lg cursor-pointer transition-all ${
+                            editAddType === 'mono' ? 'bg-blue-600 text-white shadow-xs' : 'bg-white text-slate-600 border border-slate-200'
+                          }`}
+                        >
+                          Simple (Mono)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditAddType('mixte')}
+                          className={`px-3 py-1 text-[11px] font-bold rounded-lg cursor-pointer transition-all ${
+                            editAddType === 'mixte' ? 'bg-amber-600 text-white shadow-xs' : 'bg-white text-slate-600 border border-slate-200'
+                          }`}
+                        >
+                          Palette Mixte
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Gamme Selector */}
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-600 uppercase">Gamme :</label>
+                      <select
+                        value={editAddGammeId}
+                        onChange={(e) => {
+                          const gid = e.target.value;
+                          setEditAddGammeId(gid);
+                          const selectedG = gammes.find(g => g.id === gid);
+                          if (selectedG) {
+                            if (selectedG.perfumes.length > 0) {
+                              setEditAddPerfume(selectedG.perfumes[0]);
+                            }
+                            setEditAddQty(selectedG.standardQuantity || 100);
+                          }
+                          setEditAddMixedEntries([]);
+                        }}
+                        className="w-full px-3 py-2 text-xs border border-slate-250 rounded-xl bg-white font-semibold text-slate-800 focus:ring-1 focus:ring-blue-500"
+                      >
+                        {gammes.map(g => (
+                          <option key={g.id} value={g.id}>{g.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Mono Palette Controls */}
+                    {editAddType === 'mono' && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-600 uppercase">Parfum :</label>
+                          <select
+                            value={editAddPerfume}
+                            onChange={(e) => setEditAddPerfume(e.target.value)}
+                            className="w-full px-3 py-2 text-xs border border-slate-250 rounded-xl bg-white font-semibold text-slate-800 focus:ring-1 focus:ring-blue-500"
+                          >
+                            {(gammes.find(g => g.id === editAddGammeId)?.perfumes || []).map(p => (
+                              <option key={p} value={p}>{p}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-600 uppercase">Quantité Cartons :</label>
                           <input
                             type="number"
                             min="1"
-                            value={entry.quantity}
-                            onChange={(e) => handleUpdateEntryQty(item.id, entry.perfume, parseInt(e.target.value, 10) || 0)}
-                            className="w-20 px-2 py-1 text-xs text-right border border-slate-200 rounded-lg focus:outline-hidden focus:ring-1 focus:ring-blue-500 font-mono font-bold text-slate-800 bg-slate-50"
+                            value={editAddQty}
+                            onChange={(e) => setEditAddQty(parseInt(e.target.value, 10) || 0)}
+                            className="w-full px-3 py-2 text-xs border border-slate-250 rounded-xl bg-white font-bold font-mono text-slate-800 focus:ring-1 focus:ring-blue-500"
                           />
-                          <span className="text-[10px] font-bold text-slate-400">cartons</span>
                         </div>
                       </div>
-                    ))}
+                    )}
+
+                    {/* Mixte Palette Controls */}
+                    {editAddType === 'mixte' && (
+                      <div className="space-y-3">
+                        <div className="flex flex-wrap gap-2">
+                          {(gammes.find(g => g.id === editAddGammeId)?.perfumes || []).map(perfume => {
+                            const isSelected = editAddMixedEntries.some(e => e.perfume === perfume);
+                            const active = editAddActivePerfume === perfume;
+                            return (
+                              <button
+                                key={perfume}
+                                type="button"
+                                onClick={() => {
+                                  setEditAddActivePerfume(active ? null : perfume);
+                                  const selG = gammes.find(g => g.id === editAddGammeId);
+                                  setEditAddMixedQtyInput(selG?.standardQuantity?.toString() || '100');
+                                }}
+                                className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold cursor-pointer border transition-all ${
+                                  isSelected 
+                                    ? 'bg-amber-100 text-amber-900 border-amber-300 font-bold'
+                                    : active 
+                                      ? 'bg-blue-600 text-white border-blue-600 font-bold'
+                                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                                }`}
+                              >
+                                {perfume} {isSelected && '✓'}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {editAddActivePerfume && (
+                          <div className="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between gap-3">
+                            <span className="text-xs font-bold text-slate-800">{editAddActivePerfume}</span>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                min="1"
+                                value={editAddMixedQtyInput}
+                                onChange={(e) => setEditAddMixedQtyInput(e.target.value)}
+                                className="w-20 px-2 py-1 text-xs border border-slate-200 rounded-lg font-mono font-bold text-slate-800"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const q = parseInt(editAddMixedQtyInput, 10) || 0;
+                                  if (q <= 0) return;
+                                  setEditAddMixedEntries(prev => [
+                                    ...prev.filter(e => e.perfume !== editAddActivePerfume),
+                                    { perfume: editAddActivePerfume, qty: q }
+                                  ]);
+                                  setEditAddActivePerfume(null);
+                                }}
+                                className="px-3 py-1 bg-amber-600 text-white text-xs font-bold rounded-lg hover:bg-amber-700 cursor-pointer"
+                              >
+                                Valider Parfum
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {editAddMixedEntries.length > 0 && (
+                          <div className="bg-white p-2.5 rounded-xl border border-slate-200 space-y-1">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase">Parfums choisis :</span>
+                            <div className="flex flex-wrap gap-2">
+                              {editAddMixedEntries.map(e => (
+                                <span key={e.perfume} className="bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-lg text-xs font-semibold flex items-center gap-1.5">
+                                  {e.perfume}: <strong>{e.qty}</strong>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditAddMixedEntries(prev => prev.filter(x => x.perfume !== e.perfume))}
+                                    className="text-amber-600 hover:text-amber-900 cursor-pointer font-bold"
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="flex justify-end pt-1">
+                      <button
+                        type="button"
+                        onClick={handleAddPaletteToEditSession}
+                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+                      >
+                        <Plus className="w-4 h-4" /> Confirmer l'ajout de cette palette
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                )}
+
+                {/* List of items */}
+                {editingItems.length === 0 ? (
+                  <div className="p-8 text-center bg-slate-50 border border-dashed border-slate-200 rounded-2xl">
+                    <p className="text-xs text-slate-400 italic">
+                      Aucune palette dans cet inventaire. Vous pouvez en ajouter une ci-dessus.
+                    </p>
+                  </div>
+                ) : (
+                  editingItems.map((item, idx) => (
+                    <div key={item.id} className="bg-slate-50 p-4 rounded-2xl border border-slate-200/80 space-y-3 text-left">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-black text-slate-400 font-mono">#{idx + 1}</span>
+                          <span className="font-bold text-xs text-slate-800 uppercase tracking-wider">{item.gammeName}</span>
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                            item.type === 'mono' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-800'
+                          }`}>
+                            {item.type === 'mono' ? 'Simple' : 'Palette Mixte'}
+                          </span>
+                          {item.isNew && (
+                            <span className="bg-emerald-100 text-emerald-800 text-[9px] font-bold px-1.5 py-0.5 rounded-md uppercase">
+                              Nouveau
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteEditingItem(item.id)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer transition-all flex items-center gap-1"
+                          title="Supprimer cette palette"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          <span className="text-[10px] font-semibold hidden sm:inline">Supprimer</span>
+                        </button>
+                      </div>
+
+                      <div className="space-y-2">
+                        {item.entries.map((entry, entryIdx) => (
+                          <div key={entryIdx} className="flex items-center justify-between gap-4 bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs">
+                            <span className="text-xs font-semibold text-slate-700">{entry.perfume}</span>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                min="1"
+                                value={entry.quantity}
+                                onChange={(e) => handleUpdateEditingItemQty(item.id, entry.perfume, parseInt(e.target.value, 10) || 0)}
+                                className="w-20 px-2 py-1 text-xs text-right border border-slate-200 rounded-lg focus:outline-hidden focus:ring-1 focus:ring-blue-500 font-mono font-bold text-slate-800 bg-slate-50"
+                              />
+                              <span className="text-[10px] font-bold text-slate-400">cartons</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                )}
+
+              </div>
+
             </div>
 
             {/* Footer Actions */}
             <div className="p-4 bg-slate-50 border-t border-slate-100 rounded-b-3xl flex justify-end gap-2.5">
               <button
                 type="button"
-                onClick={() => setEditingSession(null)}
+                onClick={() => {
+                  setEditingSession(null);
+                  setEditingItems([]);
+                  setDeletedItemIds([]);
+                }}
                 className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-850 cursor-pointer bg-white border border-slate-200 rounded-xl transition-all"
               >
                 Annuler
@@ -1783,7 +2147,7 @@ export default function Inventaire({
                 ) : (
                   <>
                     <Save className="w-4 h-4" />
-                    Sauvegarder les modifications
+                    Enregistrer les modifications
                   </>
                 )}
               </button>
