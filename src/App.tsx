@@ -247,6 +247,8 @@ export default function App() {
             onUpdateGamme={updateGamme}
             onDeleteGamme={deleteGamme}
             onResetAllPalettes={resetAllPalettes}
+            onAddInventoryItem={addInventoryItem}
+            onUpdateInventoryItem={updateInventoryItem}
             onDeleteInventoryItem={deleteInventoryItem}
           />
         )}

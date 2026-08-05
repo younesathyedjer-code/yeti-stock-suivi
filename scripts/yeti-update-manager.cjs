@@ -1530,11 +1530,39 @@ async function main() {
     const addRes = runCmd('git add .');
     if (addRes.success) {
       const commitInfo = getCommitInfo(extractedPath);
-      const commitRes = runCmd(`git commit -m "${commitInfo.commitMsg.replace(/"/g, '\\"')}"`);
+      // Use array arguments or safe escaping to avoid shell quoting issues on Windows
+      const commitRes = runCmd(`git commit -m "${commitInfo.commitMsg.replace(/"/g, '\\"').replace(/`/g, '\\`')}"`);
       
+      let hasCommitted = false;
       if (commitRes.success) {
         gitCommitStatus = 'OK';
+        hasCommitted = true;
         logSuccess(`Git Commit réalisé avec le message : "${commitInfo.commitMsg}"`);
+      } else {
+        // Check if git status has uncommitted changes or if branch is ahead
+        const statusRes = runCmd('git status --porcelain');
+        if (statusRes.output && statusRes.output.trim().length > 0) {
+          // Retry commit with a simple fallback message
+          const retryCommit = runCmd('git commit -m "Mise a jour automatique Yeti Stock"');
+          if (retryCommit.success) {
+            gitCommitStatus = 'OK';
+            hasCommitted = true;
+            logSuccess('Git Commit réalisé (via message simplifié).');
+          } else {
+            logWarning('Git commit a échoué malgré des modifications détectées.');
+            gitCommitStatus = 'Échoué';
+          }
+        } else {
+          logInfo('Aucun changement à commiter dans Git.');
+          gitCommitStatus = 'OK (Aucun changement)';
+        }
+      }
+
+      // Check if branch is ahead of origin or if we just committed
+      const aheadRes = runCmd('git status -sb');
+      const isAhead = aheadRes.output && aheadRes.output.includes('[ahead');
+
+      if (hasCommitted || isAhead) {
         const pushRes = runCmd('git push origin main');
         if (pushRes.success) {
           gitPushStatus = 'OK';
@@ -1544,12 +1572,11 @@ async function main() {
             logInfo(`Workflow GitHub Actions CI/CD enclenché : ${c.cyan}${c.bold}${actionsUrl}${c.reset}`);
           }
         } else {
+          gitPushStatus = 'Échoué';
           logWarning('Le git push a échoué. Le code est commité localement.');
         }
       } else {
-        logInfo('Aucun changement à commiter dans Git.');
-        gitCommitStatus = 'OK (Aucun changement)';
-        gitPushStatus = 'OK';
+        gitPushStatus = 'Ignoré (Déjà à jour sur GitHub)';
       }
     }
   } else {
