@@ -9,7 +9,7 @@ import { Gamme, InventoryItem } from '../types';
 import { 
   ClipboardCheck, Sparkles, Folder, RefreshCw, Layers, Plus, 
   Trash2, ShieldCheck, AlertCircle, Printer, Calendar, User,
-  Edit2, Save, X, Check, QrCode, Camera, Keyboard, Search
+  Edit2, Save, X, Check, QrCode, Camera, Keyboard, Search, Copy
 } from 'lucide-react';
 
 interface InventaireProps {
@@ -243,6 +243,7 @@ export default function Inventaire({
   const [editAddMixedQtyInput, setEditAddMixedQtyInput] = useState<string>('100');
   const [editSearchTerm, setEditSearchTerm] = useState<string>('');
   const [activeMixteGammeId, setActiveMixteGammeId] = useState<string | null>(null);
+  const [isDuplicating, setIsDuplicating] = useState<boolean>(false);
 
   // QR & Barcode scanner states
   const [isSimulationOpen, setIsSimulationOpen] = useState<boolean>(false);
@@ -764,9 +765,34 @@ export default function Inventaire({
   };
 
   const handleStartEditSession = (session: ValidatedSession) => {
+    setIsDuplicating(false);
     setEditingSession(session);
     const initialItems: EditingItem[] = session.items.map(item => ({
       id: item.id,
+      gammeId: item.gammeId,
+      gammeName: item.gammeName,
+      type: item.type,
+      entries: item.entries.map((e: any) => ({
+        perfume: e.perfume,
+        quantity: e.quantity
+      }))
+    }));
+    setEditingItems(initialItems);
+    setDeletedItemIds([]);
+    setShowAddPaletteForm(false);
+    setEditAddGammeId('');
+    setEditAddPerfume('');
+    setEditAddMixedEntries([]);
+    setEditSearchTerm('');
+    setActiveMixteGammeId(null);
+  };
+
+  const handleStartDuplicateSession = (session: ValidatedSession) => {
+    setIsDuplicating(true);
+    setEditingSession(session);
+    const initialItems: EditingItem[] = session.items.map(item => ({
+      id: `dup_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      isNew: true,
       gammeId: item.gammeId,
       gammeName: item.gammeName,
       type: item.type,
@@ -858,34 +884,71 @@ export default function Inventaire({
     if (!editingSession) return;
     setIsUpdatingSession(true);
     try {
-      // 1. Delete items removed during editing from Firestore
-      for (const id of deletedItemIds) {
-        await onDeleteInventoryItem(id);
-      }
+      if (isDuplicating) {
+        if (editingItems.length === 0) {
+          triggerErrorMsg("Impossible de valider un inventaire vide. Veuillez ajouter au moins une palette.");
+          setIsUpdatingSession(false);
+          return;
+        }
 
-      // 2. Add new items or Update existing items
-      for (const item of editingItems) {
-        if (item.isNew) {
+        const existingValidationNumbers = inventories
+          .map(inv => inv.validationNumber || 0)
+          .filter(Boolean);
+        const nextValidationNumber = existingValidationNumbers.length > 0
+          ? Math.max(...existingValidationNumbers) + 1
+          : 1;
+
+        const validationId = `validation_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        const validationTimestamp = new Date().toISOString();
+
+        for (const item of editingItems) {
           await onAddInventoryItem(
             item.gammeId,
             item.gammeName,
             item.type,
             item.entries.map(e => ({ perfume: e.perfume, qty: e.quantity })),
-            editingSession.id,
-            editingSession.validationNumber,
-            editingSession.createdAt
+            validationId,
+            nextValidationNumber,
+            validationTimestamp
           );
-        } else {
-          await onUpdateInventoryItem(item.id, item.entries);
         }
+
+        const formattedDate = new Date(validationTimestamp).toLocaleDateString('fr-FR');
+        const formattedTime = new Date(validationTimestamp).toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit', hour12: false});
+
+        triggerSuccessMsg(`L'inventaire N°${editingSession.numberCode} a été dupliqué avec succès sous le N°${nextValidationNumber} le ${formattedDate} à ${formattedTime} !`);
+      } else {
+        // 1. Delete items removed during editing from Firestore
+        for (const id of deletedItemIds) {
+          await onDeleteInventoryItem(id);
+        }
+
+        // 2. Add new items or Update existing items
+        for (const item of editingItems) {
+          if (item.isNew) {
+            await onAddInventoryItem(
+              item.gammeId,
+              item.gammeName,
+              item.type,
+              item.entries.map(e => ({ perfume: e.perfume, qty: e.quantity })),
+              editingSession.id,
+              editingSession.validationNumber,
+              editingSession.createdAt
+            );
+          } else {
+            await onUpdateInventoryItem(item.id, item.entries);
+          }
+        }
+
+        triggerSuccessMsg(`L'inventaire N°${editingSession.numberCode} a été modifié et enregistré avec succès !`);
       }
 
-      triggerSuccessMsg(`L'inventaire N°${editingSession.numberCode} a été modifié et enregistré avec succès !`);
       setEditingSession(null);
       setEditingItems([]);
       setDeletedItemIds([]);
+      setIsDuplicating(false);
     } catch (e: any) {
-      triggerErrorMsg(e.message || "Erreur lors de la modification de l'inventaire.");
+      triggerErrorMsg(e.message || "Erreur lors de l'enregistrement de l'inventaire.");
     } finally {
       setIsUpdatingSession(false);
     }
@@ -1499,6 +1562,14 @@ export default function Inventaire({
                               <span className="text-[10px]">Modifier</span>
                             </button>
                             <button
+                              onClick={() => handleStartDuplicateSession(session)}
+                              className="p-1 px-2 border border-emerald-200 bg-emerald-50/50 hover:bg-emerald-100/80 text-emerald-700 rounded-lg transition-all font-semibold cursor-pointer flex items-center gap-1"
+                              title="Dupliquer cet inventaire"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                              <span className="text-[10px]">Dupliquer</span>
+                            </button>
+                            <button
                               onClick={() => handleDeleteSession(session)}
                               className="p-1 px-2 border border-slate-200 rounded-lg hover:bg-rose-50 hover:border-rose-100 hover:text-rose-600 text-slate-400 transition-all font-semibold cursor-pointer flex items-center gap-1"
                               title="Supprimer cet inventaire"
@@ -1823,10 +1894,26 @@ export default function Inventaire({
             <div className="p-5 px-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/90 rounded-t-3xl">
               <div>
                 <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2 font-sans">
-                  <Edit2 className="w-4 h-4 text-blue-600" /> Modifier l'Inventaire {editingSession.numberCode}
+                  {isDuplicating ? (
+                    <>
+                      <Copy className="w-4 h-4 text-emerald-600" /> Dupliquer l'Inventaire N°{editingSession.numberCode}
+                    </>
+                  ) : (
+                    <>
+                      <Edit2 className="w-4 h-4 text-blue-600" /> Modifier l'Inventaire N°{editingSession.numberCode}
+                    </>
+                  )}
                 </h3>
                 <p className="text-[11px] text-slate-500 font-sans mt-0.5">
-                  Saisie d'origine par <strong className="text-slate-700">{editingSession.agentName}</strong> le {new Date(editingSession.createdAt).toLocaleDateString('fr-FR')} à {new Date(editingSession.createdAt).toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit', hour12: false})}
+                  {isDuplicating ? (
+                    <>
+                      Horodatage de duplication : <strong className="text-emerald-700 font-bold">{new Date().toLocaleDateString('fr-FR')} à {new Date().toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit', hour12: false})}</strong> (Copie de l'inventaire N°{editingSession.numberCode} de {editingSession.agentName})
+                    </>
+                  ) : (
+                    <>
+                      Saisie d'origine par <strong className="text-slate-700">{editingSession.agentName}</strong> le {new Date(editingSession.createdAt).toLocaleDateString('fr-FR')} à {new Date(editingSession.createdAt).toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit', hour12: false})}
+                    </>
+                  )}
                 </p>
               </div>
               <button
@@ -1835,6 +1922,7 @@ export default function Inventaire({
                   setEditingSession(null);
                   setEditingItems([]);
                   setDeletedItemIds([]);
+                  setIsDuplicating(false);
                 }}
                 className="bg-white border border-slate-200 text-slate-400 hover:text-slate-600 p-1.5 rounded-xl cursor-pointer transition-all"
               >
@@ -1883,9 +1971,19 @@ export default function Inventaire({
             <div className="p-6 overflow-y-auto flex-1 space-y-6">
               
               {/* Info Banner */}
-              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 flex items-center justify-between text-xs text-slate-600">
+              <div className={`border rounded-2xl p-3 flex items-center justify-between text-xs ${
+                isDuplicating ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900' : 'bg-slate-50 border-slate-200 text-slate-600'
+              }`}>
                 <p className="leading-snug">
-                  💡 <strong>Liste globale de tous les produits :</strong> Modifiez les quantités, ajoutez de nouvelles palettes ou supprimez des palettes directement sous chaque parfum.
+                  {isDuplicating ? (
+                    <>
+                      📋 <strong>Duplication d'inventaire :</strong> Les saisies ci-dessous sont pré-remplies d'après l'inventaire N°{editingSession.numberCode}. Vous pouvez <strong>ajouter</strong>, <strong>modifier</strong> ou <strong>supprimer</strong> des saisies avant de valider. L'inventaire dupliqué prendra la date et l'heure actuelles.
+                    </>
+                  ) : (
+                    <>
+                      💡 <strong>Liste globale de tous les produits :</strong> Modifiez les quantités, ajoutez de nouvelles palettes ou supprimez des palettes directement sous chaque parfum.
+                    </>
+                  )}
                 </p>
               </div>
 
@@ -2104,7 +2202,7 @@ export default function Inventaire({
             {/* Footer Actions */}
             <div className="p-4 bg-slate-50 border-t border-slate-100 rounded-b-3xl flex justify-between items-center gap-2">
               <span className="text-[11px] text-slate-500 font-medium hidden sm:inline">
-                {editingItems.length} palette(s) dans la modification
+                {editingItems.length} palette(s) dans {isDuplicating ? 'la duplication' : 'la modification'}
               </span>
               <div className="flex gap-2">
                 <button
@@ -2113,6 +2211,7 @@ export default function Inventaire({
                     setEditingSession(null);
                     setEditingItems([]);
                     setDeletedItemIds([]);
+                    setIsDuplicating(false);
                   }}
                   className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-850 cursor-pointer bg-white border border-slate-200 rounded-xl transition-all"
                 >
@@ -2122,12 +2221,21 @@ export default function Inventaire({
                   type="button"
                   onClick={handleSaveSessionEdit}
                   disabled={isUpdatingSession}
-                  className="px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 cursor-pointer rounded-xl transition-all flex items-center gap-1.5 shadow-md shadow-blue-200"
+                  className={`px-5 py-2 text-xs font-bold text-white disabled:opacity-50 cursor-pointer rounded-xl transition-all flex items-center gap-1.5 shadow-md ${
+                    isDuplicating 
+                      ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200' 
+                      : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'
+                  }`}
                 >
                   {isUpdatingSession ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" />
                       Enregistrement en cours...
+                    </>
+                  ) : isDuplicating ? (
+                    <>
+                      <Copy className="w-4 h-4" />
+                      Valider et Enregistrer la Duplication
                     </>
                   ) : (
                     <>

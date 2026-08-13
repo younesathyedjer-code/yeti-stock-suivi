@@ -10,7 +10,7 @@ import { getValidatedSessions, ValidatedSession } from './Inventaire';
 import { 
   Users, Layers, Settings, ShieldAlert, Plus, Edit2, Trash2, 
   Check, X, ShieldCheck, Sparkles, Key, AlertOctagon, HelpCircle,
-  ClipboardCheck, Printer, Eye, Clock, User, RefreshCw, Save, Search
+  ClipboardCheck, Printer, Eye, Clock, User, RefreshCw, Save, Search, Copy
 } from 'lucide-react';
 
 interface EspaceAdminProps {
@@ -238,12 +238,38 @@ export default function EspaceAdmin({
   const [editAddMixedQtyInput, setEditAddMixedQtyInput] = useState('100');
   const [editSearchTerm, setEditSearchTerm] = useState('');
   const [activeMixteGammeId, setActiveMixteGammeId] = useState<string | null>(null);
+  const [isDuplicating, setIsDuplicating] = useState<boolean>(false);
 
   // Session Edit Handlers
   const handleStartEditSession = (session: ValidatedSession) => {
+    setIsDuplicating(false);
     setEditingSession(session);
     const initialItems: EditingItem[] = session.items.map(item => ({
       id: item.id,
+      gammeId: item.gammeId,
+      gammeName: item.gammeName,
+      type: item.type,
+      entries: item.entries.map((e: any) => ({
+        perfume: e.perfume,
+        quantity: e.quantity
+      }))
+    }));
+    setEditingItems(initialItems);
+    setDeletedItemIds([]);
+    setShowAddPaletteForm(false);
+    setEditAddGammeId('');
+    setEditAddPerfume('');
+    setEditAddMixedEntries([]);
+    setEditSearchTerm('');
+    setActiveMixteGammeId(null);
+  };
+
+  const handleStartDuplicateSession = (session: ValidatedSession) => {
+    setIsDuplicating(true);
+    setEditingSession(session);
+    const initialItems: EditingItem[] = session.items.map(item => ({
+      id: `dup_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      isNew: true,
       gammeId: item.gammeId,
       gammeName: item.gammeName,
       type: item.type,
@@ -335,36 +361,75 @@ export default function EspaceAdmin({
     if (!editingSession) return;
     setIsUpdatingSession(true);
     try {
-      for (const id of deletedItemIds) {
-        await onDeleteInventoryItem(id);
-      }
+      if (isDuplicating) {
+        if (editingItems.length === 0) {
+          triggerErrorMsg("Impossible de valider un inventaire vide. Veuillez ajouter au moins une palette.");
+          setIsUpdatingSession(false);
+          return;
+        }
 
-      for (const item of editingItems) {
-        if (item.isNew) {
-          if (onAddInventoryItem) {
+        const existingValidationNumbers = inventories
+          .map(inv => inv.validationNumber || 0)
+          .filter(Boolean);
+        const nextValidationNumber = existingValidationNumbers.length > 0
+          ? Math.max(...existingValidationNumbers) + 1
+          : 1;
+
+        const validationId = `validation_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        const validationTimestamp = new Date().toISOString();
+
+        if (onAddInventoryItem) {
+          for (const item of editingItems) {
             await onAddInventoryItem(
               item.gammeId,
               item.gammeName,
               item.type,
               item.entries.map(e => ({ perfume: e.perfume, qty: e.quantity })),
-              editingSession.id,
-              editingSession.validationNumber,
-              editingSession.createdAt
+              validationId,
+              nextValidationNumber,
+              validationTimestamp
             );
           }
-        } else {
-          if (onUpdateInventoryItem) {
-            await onUpdateInventoryItem(item.id, item.entries);
+        }
+
+        const formattedDate = new Date(validationTimestamp).toLocaleDateString('fr-FR');
+        const formattedTime = new Date(validationTimestamp).toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit', hour12: false});
+
+        triggerSuccessMsg(`L'inventaire N°${editingSession.numberCode} a été dupliqué avec succès sous le N°${nextValidationNumber} le ${formattedDate} à ${formattedTime} !`);
+      } else {
+        for (const id of deletedItemIds) {
+          await onDeleteInventoryItem(id);
+        }
+
+        for (const item of editingItems) {
+          if (item.isNew) {
+            if (onAddInventoryItem) {
+              await onAddInventoryItem(
+                item.gammeId,
+                item.gammeName,
+                item.type,
+                item.entries.map(e => ({ perfume: e.perfume, qty: e.quantity })),
+                editingSession.id,
+                editingSession.validationNumber,
+                editingSession.createdAt
+              );
+            }
+          } else {
+            if (onUpdateInventoryItem) {
+              await onUpdateInventoryItem(item.id, item.entries);
+            }
           }
         }
+
+        triggerSuccessMsg(`L'inventaire N°${editingSession.numberCode} a été modifié et enregistré avec succès !`);
       }
 
-      triggerSuccessMsg(`L'inventaire N°${editingSession.numberCode} a été modifié et enregistré avec succès !`);
       setEditingSession(null);
       setEditingItems([]);
       setDeletedItemIds([]);
+      setIsDuplicating(false);
     } catch (e: any) {
-      triggerErrorMsg(e.message || "Erreur lors de la modification de l'inventaire.");
+      triggerErrorMsg(e.message || "Erreur lors de l'enregistrement de l'inventaire.");
     } finally {
       setIsUpdatingSession(false);
     }
@@ -1303,6 +1368,19 @@ export default function EspaceAdmin({
                         </button>
                         <button
                           type="button"
+                          onClick={() => {
+                            const valSession = getValidatedSessions(inventories).find(s => s.id === item.id);
+                            if (valSession) {
+                              handleStartDuplicateSession(valSession);
+                            }
+                          }}
+                          className="flex-1 sm:flex-initial bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 text-emerald-800 font-semibold text-xs px-3.5 py-2 rounded-xl cursor-pointer flex items-center justify-center gap-1.5 transition-all shadow-2xs"
+                          title="Dupliquer cet inventaire"
+                        >
+                          <Copy className="w-3.5 h-3.5" /> Dupliquer
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => handlePrintSingleInventory(item)}
                           className="flex-1 sm:flex-initial bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs px-4 py-2 rounded-xl cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs"
                         >
@@ -1747,10 +1825,26 @@ export default function EspaceAdmin({
             <div className="p-5 px-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/90 rounded-t-3xl">
               <div>
                 <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2 font-sans">
-                  <Edit2 className="w-4 h-4 text-blue-600" /> Modifier l'Inventaire {editingSession.numberCode}
+                  {isDuplicating ? (
+                    <>
+                      <Copy className="w-4 h-4 text-emerald-600" /> Dupliquer l'Inventaire N°{editingSession.numberCode}
+                    </>
+                  ) : (
+                    <>
+                      <Edit2 className="w-4 h-4 text-blue-600" /> Modifier l'Inventaire N°{editingSession.numberCode}
+                    </>
+                  )}
                 </h3>
                 <p className="text-[11px] text-slate-500 font-sans mt-0.5">
-                  Saisie d'origine par <strong className="text-slate-700">{editingSession.agentName}</strong> le {new Date(editingSession.createdAt).toLocaleDateString('fr-FR')} à {new Date(editingSession.createdAt).toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit', hour12: false})}
+                  {isDuplicating ? (
+                    <>
+                      Horodatage de duplication : <strong className="text-emerald-700 font-bold">{new Date().toLocaleDateString('fr-FR')} à {new Date().toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit', hour12: false})}</strong> (Copie de l'inventaire N°{editingSession.numberCode} de {editingSession.agentName})
+                    </>
+                  ) : (
+                    <>
+                      Saisie d'origine par <strong className="text-slate-700">{editingSession.agentName}</strong> le {new Date(editingSession.createdAt).toLocaleDateString('fr-FR')} à {new Date(editingSession.createdAt).toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit', hour12: false})}
+                    </>
+                  )}
                 </p>
               </div>
               <button
@@ -1759,6 +1853,7 @@ export default function EspaceAdmin({
                   setEditingSession(null);
                   setEditingItems([]);
                   setDeletedItemIds([]);
+                  setIsDuplicating(false);
                 }}
                 className="bg-white border border-slate-200 text-slate-400 hover:text-slate-600 p-1.5 rounded-xl cursor-pointer transition-all"
               >
@@ -1807,9 +1902,19 @@ export default function EspaceAdmin({
             <div className="p-6 overflow-y-auto flex-1 space-y-6">
               
               {/* Info Banner */}
-              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 flex items-center justify-between text-xs text-slate-600">
+              <div className={`border rounded-2xl p-3 flex items-center justify-between text-xs ${
+                isDuplicating ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900' : 'bg-slate-50 border-slate-200 text-slate-600'
+              }`}>
                 <p className="leading-snug">
-                  💡 <strong>Liste globale de tous les produits :</strong> Modifiez les quantités, ajoutez de nouvelles palettes ou supprimez des palettes directement sous chaque parfum.
+                  {isDuplicating ? (
+                    <>
+                      📋 <strong>Duplication d'inventaire :</strong> Les saisies ci-dessous sont pré-remplies d'après l'inventaire N°{editingSession.numberCode}. Vous pouvez <strong>ajouter</strong>, <strong>modifier</strong> ou <strong>supprimer</strong> des saisies avant de valider. L'inventaire dupliqué prendra la date et l'heure actuelles.
+                    </>
+                  ) : (
+                    <>
+                      💡 <strong>Liste globale de tous les produits :</strong> Modifiez les quantités, ajoutez de nouvelles palettes ou supprimez des palettes directement sous chaque parfum.
+                    </>
+                  )}
                 </p>
               </div>
 
@@ -2026,7 +2131,7 @@ export default function EspaceAdmin({
             {/* Footer Actions */}
             <div className="p-4 bg-slate-50 border-t border-slate-100 rounded-b-3xl flex justify-between items-center gap-2">
               <span className="text-[11px] text-slate-500 font-medium hidden sm:inline">
-                {editingItems.length} palette(s) dans la modification
+                {editingItems.length} palette(s) dans {isDuplicating ? 'la duplication' : 'la modification'}
               </span>
               <div className="flex gap-2">
                 <button
@@ -2035,6 +2140,7 @@ export default function EspaceAdmin({
                     setEditingSession(null);
                     setEditingItems([]);
                     setDeletedItemIds([]);
+                    setIsDuplicating(false);
                   }}
                   className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-850 cursor-pointer bg-white border border-slate-200 rounded-xl transition-all"
                 >
@@ -2044,12 +2150,21 @@ export default function EspaceAdmin({
                   type="button"
                   onClick={handleSaveSessionEdit}
                   disabled={isUpdatingSession}
-                  className="px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 cursor-pointer rounded-xl transition-all flex items-center gap-1.5 shadow-md shadow-blue-200"
+                  className={`px-5 py-2 text-xs font-bold text-white disabled:opacity-50 cursor-pointer rounded-xl transition-all flex items-center gap-1.5 shadow-md ${
+                    isDuplicating 
+                      ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200' 
+                      : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'
+                  }`}
                 >
                   {isUpdatingSession ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" />
                       Enregistrement en cours...
+                    </>
+                  ) : isDuplicating ? (
+                    <>
+                      <Copy className="w-4 h-4" />
+                      Valider et Enregistrer la Duplication
                     </>
                   ) : (
                     <>
